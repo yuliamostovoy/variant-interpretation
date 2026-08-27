@@ -24,7 +24,13 @@ workflow VisualizePlotsLongRead {
     input {
         File variant_list          # curated subset (bcftools-query TSV: chrom,POS0,END,ID,SVTYPE,samples)
         File pedfile
-        File sample_bam_bai        # sample <tab> bai <tab> bam
+        # Per-individual aligned reads, one entry per sample. On Terra, bind these to a data
+        # table set, e.g. sample_ids=this.individuals.<id>, bams=this.individuals.bam,
+        # bais=this.individuals.bai. Kept as String (gs:// URIs) so tasks stream them
+        # remotely rather than Cromwell localizing them.
+        Array[String] sample_ids
+        Array[String] bams
+        Array[String] bais
         File reference
         File reference_index
         String prefix
@@ -57,6 +63,10 @@ workflow VisualizePlotsLongRead {
 
     String buffer_ = select_first([buffer, "500"])
     Int igv_max_window_ = select_first([igv_max_window, 150000])
+
+    # Assemble the sample <tab> bai <tab> bam manifest the sub-workflows expect from the
+    # per-individual arrays (index second, bam third).
+    File sample_bam_bai = write_tsv(transpose([sample_ids, bais, bams]))
 
     # Component 2: normalize the curated variant list into the canonical bgzipped BED
     call reformat.ReformatVariants as reformat_variants {
