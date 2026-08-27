@@ -265,7 +265,7 @@ task update_sample_bam_bai{
     command <<<
         head -n+1 ~{ped_file} > family_ped.txt
         grep -w ^~{family} ~{ped_file} >> family_ped.txt
-        python3.9 /src/variant-interpretation/scripts/renameCrams.py --ped family_ped.txt --scc ~{sample_bam_bai}
+        python3 /src/variant-interpretation/scripts/renameCrams.py --ped family_ped.txt --scc ~{sample_bam_bai}
         mv changed_sample_crai_cram.txt changed_sample_bam_bai.txt
         cut -f1 changed_sample_bam_bai.txt > samples.txt
         cut -f5 changed_sample_bam_bai.txt > bai.txt

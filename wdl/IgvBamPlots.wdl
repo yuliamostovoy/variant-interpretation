@@ -140,7 +140,7 @@ task runIGV_whole_genome_localize{
             mkdir pe_igv_plots
             head -n+1 ~{ped_file} > family_ped.txt
             grep -w ~{family} ~{ped_file} >> family_ped.txt
-            python3.6 /src/renameCramsLocalize.py --ped family_ped.txt --scc ~{sample_bam_bai}
+            python3 /src/variant-interpretation/scripts/renameCramsLocalize.py --ped family_ped.txt --scc ~{sample_bam_bai}
             cut -f4 changed_sample_crai_cram.txt > bams.txt
 
             while read sample bai bam new_bam new_bai

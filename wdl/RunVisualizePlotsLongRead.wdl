@@ -47,10 +47,11 @@ workflow VisualizePlotsLongRead {
         Int? depth_flank
         Int? depth_window
 
-        String sv_base_mini_docker
-        String igv_docker
-        String variant_interpretation_docker
-        String long_read_visualize_docker
+        # Only two images are needed: a stock gatk-sv sv_base_mini for the light
+        # grep/awk/tar tasks, and the self-contained long_read_visualize image (built from
+        # this fork) for every task that runs repo scripts, IGV, mosdepth, or image stacking.
+        String sv_base_mini_docker = "us.gcr.io/broad-dsde-methods/gatk-sv/sv-base-mini:2024-10-25-v0.29-beta-5ea22a52"
+        String long_read_visualize_docker = "quay.io/ymostovoy/lr-visualize:latest"
 
         RuntimeAttr? runtime_attr_reformat
         RuntimeAttr? runtime_attr_run_igv
@@ -73,7 +74,7 @@ workflow VisualizePlotsLongRead {
         input:
             variant_list = variant_list,
             prefix = prefix,
-            variant_interpretation_docker = variant_interpretation_docker,
+            variant_interpretation_docker = long_read_visualize_docker,
             runtime_attr_override = runtime_attr_reformat
     }
 
@@ -94,8 +95,8 @@ workflow VisualizePlotsLongRead {
                 prefix = prefix,
                 buffer = buffer_,
                 sv_base_mini_docker = sv_base_mini_docker,
-                igv_docker = igv_docker,
-                variant_interpretation_docker = variant_interpretation_docker,
+                igv_docker = long_read_visualize_docker,
+                variant_interpretation_docker = long_read_visualize_docker,
                 runtime_attr_run_igv = runtime_attr_run_igv,
                 runtime_attr_igv = runtime_attr_igv,
                 runtime_attr_update_scc = runtime_attr_update_scc
