@@ -8,3 +8,11 @@ workflows:
         - main
       tags:
         - /.*/
+  - subclass: WDL
+    name: RunVisualizePlotsLongRead
+    primaryDescriptorPath: /wdl/RunVisualizePlotsLongRead.wdl
+    filters:
+      branches:
+        - main
+      tags:
+        - /.*/

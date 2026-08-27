@@ -11,7 +11,7 @@
 
 FROM google/cloud-sdk:slim
 
-ARG MOSDEPTH_VERSION=0.3.8
+ARG MOSDEPTH_VERSION=0.3.14
 
 ENV DEBIAN_FRONTEND=noninteractive
 
