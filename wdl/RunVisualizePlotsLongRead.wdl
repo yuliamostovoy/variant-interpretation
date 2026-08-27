@@ -111,8 +111,6 @@ workflow VisualizePlotsLongRead {
                 ped_file = pedfile,
                 fam_ids = fam_ids,
                 sample_bam_bai = sample_bam_bai,
-                reference = reference,
-                reference_index = reference_index,
                 flank = depth_flank,
                 window = depth_window,
                 sv_base_mini_docker = sv_base_mini_docker,
