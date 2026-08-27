@@ -24,10 +24,6 @@ workflow VisualizePlotsLongRead {
     input {
         File variant_list          # curated subset (bcftools-query TSV: chrom,POS0,END,ID,SVTYPE,samples)
         File pedfile
-        # Per-individual aligned reads, one entry per sample. On Terra, bind these to a data
-        # table set, e.g. sample_ids=this.individuals.<id>, bams=this.individuals.bam,
-        # bais=this.individuals.bai. Kept as String (gs:// URIs) so tasks stream them
-        # remotely rather than Cromwell localizing them.
         Array[String] sample_ids
         Array[String] bams
         Array[String] bais
@@ -47,9 +43,6 @@ workflow VisualizePlotsLongRead {
         Int? depth_flank
         Int? depth_window
 
-        # Only two images are needed: a stock gatk-sv sv_base_mini for the light
-        # grep/awk/tar tasks, and the self-contained long_read_visualize image (built from
-        # this fork) for every task that runs repo scripts, IGV, mosdepth, or image stacking.
         String sv_base_mini_docker = "us.gcr.io/broad-dsde-methods/gatk-sv/sv-base-mini:2024-10-25-v0.29-beta-5ea22a52"
         String long_read_visualize_docker = "quay.io/ymostovoy/lr-visualize:latest"
 
@@ -67,9 +60,16 @@ workflow VisualizePlotsLongRead {
 
     # Assemble the sample <tab> bai <tab> bam manifest the sub-workflows expect from the
     # per-individual arrays (index second, bam third).
-    File sample_bam_bai = write_tsv(transpose([sample_ids, bais, bams]))
+    call make_sample_manifest {
+        input:
+            sample_ids = sample_ids,
+            bais = bais,
+            bams = bams,
+            sv_base_mini_docker = sv_base_mini_docker
+    }
+    File sample_bam_bai = make_sample_manifest.manifest
 
-    # Component 2: normalize the curated variant list into the canonical bgzipped BED
+    # normalize the curated variant list into the canonical bgzipped BED
     call reformat.ReformatVariants as reformat_variants {
         input:
             variant_list = variant_list,
@@ -78,7 +78,7 @@ workflow VisualizePlotsLongRead {
             runtime_attr_override = runtime_attr_reformat
     }
 
-    # Component 3: IGV reads track
+    # IGV reads track
     if (run_IGV) {
         call igv_bam.IGV_all_samples as igv_plots {
             input:
@@ -103,7 +103,7 @@ workflow VisualizePlotsLongRead {
         }
     }
 
-    # Component 4: mosdepth depth track for DEL/DUP
+    # mosdepth depth track for DEL/DUP
     if (run_depth) {
         call depth.LongReadDepthPlot as depth_plots {
             input:
@@ -137,6 +137,34 @@ workflow VisualizePlotsLongRead {
         File? igv_plots_tar = igv_plots.tar_gz_pe
         File? depth_plots_tar = depth_plots.Plots
         File? combined_plots_tar = concat_plots.combined_tar
+    }
+}
+
+task make_sample_manifest {
+    input {
+        Array[String] sample_ids
+        Array[String] bais
+        Array[String] bams
+        String sv_base_mini_docker
+    }
+
+    command <<<
+        set -euo pipefail
+        paste ~{write_lines(sample_ids)} ~{write_lines(bais)} ~{write_lines(bams)} > sample_bam_bai.tsv
+    >>>
+
+    output {
+        File manifest = "sample_bam_bai.tsv"
+    }
+
+    runtime {
+        cpu: 1
+        memory: "1 GiB"
+        disks: "local-disk 10 HDD"
+        bootDiskSizeGb: 8
+        docker: sv_base_mini_docker
+        preemptible: 2
+        maxRetries: 1
     }
 }
 
