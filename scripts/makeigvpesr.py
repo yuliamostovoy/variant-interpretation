@@ -26,6 +26,8 @@ parser.add_argument('-c', '--chromosome', type=str, help='name of chromosome to 
 parser.add_argument('-i', '--igvfile', type=str, help='name of chromosome to make igv on', default='all')
 parser.add_argument('-bam', '--bamfiscript', type=str, help='name of chromosome to make igv on', default='all')
 parser.add_argument('-m', '--igvmaxwindow', type=str, help='max length of SV to appear in IGV', default=10e10)
+parser.add_argument('--long_read', dest='long_read', action='store_true', help='render for long reads: omit viewaspairs (paired-end display is meaningless for long reads)')
+parser.add_argument('--genome', type=str, help='reference genome fasta to load in IGV (needed for BAM/arbitrary references)', default=None)
 
 args = parser.parse_args()
 
@@ -36,6 +38,8 @@ varfile = args.varfile
 pedigree = args.ped
 fam_id = args.fam_id
 igv_max_window = args.igvmaxwindow
+long_read = args.long_read
+genome = args.genome
 
 
 outstring=os.path.basename(varfile)[0:-4]
@@ -115,6 +119,8 @@ with open(bamfiscript,'w') as h:
     h.write("mkdir -p {}\n".format(outdir))
     with open(igvfile,'w') as g:
         g.write('new\n')
+        if genome:
+            g.write('genome ' + genome + '\n')
         with open(varfile,'r') as f:
             for line in f:
                 dat=line.rstrip().split("\t")
@@ -141,7 +147,8 @@ with open(bamfiscript,'w') as h:
                     g.write('goto '+Chr+":"+str(Start_Buff)+'-'+str(End_Buff)+'\n')
                     g.write('region '+Chr+":"+str(Start)+'-'+str(End)+'\n')
                     g.write('sort base\n')
-                    g.write('viewaspairs\n')
+                    if not long_read:
+                        g.write('viewaspairs\n')
                     g.write('squish\n')
                     g.write('collapse Refseq Genes\n')
                     g.write('snapshotDirectory '+outdir+'\n')
@@ -150,7 +157,8 @@ with open(bamfiscript,'w') as h:
                     g.write('goto '+Chr+":"+str(Start-buff)+'-'+str(Start+buff)+'\n')
                     g.write('region '+Chr+":"+str(Start)+'-'+str(Start)+'\n')
                     g.write('sort base\n')
-                    g.write('viewaspairs\n')
+                    if not long_read:
+                        g.write('viewaspairs\n')
                     g.write('squish\n')
                     g.write('collapse Refseq Genes\n')
                     g.write('snapshotDirectory '+outdir+'\n')
@@ -158,7 +166,8 @@ with open(bamfiscript,'w') as h:
                     g.write('goto '+Chr+":"+str(End-buff)+'-'+str(End+buff)+'\n')
                     g.write('region '+Chr+":"+str(End)+'-'+str(End)+'\n')
                     g.write('sort base\n')
-                    g.write('viewaspairs\n')
+                    if not long_read:
+                        g.write('viewaspairs\n')
                     g.write('squish\n')
                     g.write('collapse Refseq Genes\n')
                     g.write('snapshotDirectory '+outdir+'\n')
@@ -170,4 +179,6 @@ with open(bamfiscript,'w') as h:
                 # g.write('snapshotDirectory '+outdir+'\n')
                 # g.write('snapshot '+ID+'.png\n' )
                 g.write('new\n')
+                if genome:
+                    g.write('genome ' + genome + '\n')
         g.write('exit\n')
