@@ -95,7 +95,9 @@ cram_list = cram['cram'].tolist()
 samples_list = args.samples.split(',')
 #cram_list=args.crams.split(',')
 mydict = {key:value for key, value in zip(samples_list,cram_list)}
-ped = pd.read_csv(pedigree, sep='\t', header=0).replace(np.nan, '', regex=True)
+ped = pd.read_csv(pedigree, sep='\t', header=None).replace(np.nan, '', regex=True)
+ped = ped.iloc[:, :6]
+ped.columns = ['FamilyID', 'IndividualID', 'FatherID', 'MotherID', 'Sex', 'Affected']
 ped['FatherID'] = ped['FatherID'].astype(str)
 ped['MotherID'] = ped['MotherID'].astype(str)
 ped.Affected = pd.to_numeric(ped.Affected)

@@ -216,7 +216,7 @@ task depth_plot {
             export GCS_OAUTH_TOKEN=`gcloud auth application-default print-access-token`
             samtools view -b -o $sample.bam $bam -L regions.bed -M
             samtools index $sample.bam
-            mosdepth --by windows.bed --no-per-base -n $sample $sample.bam
+            mosdepth --no-per-base --by windows.bed $sample $sample.bam
         done < fam_scc.txt
 
         python3 /src/variant-interpretation/scripts/plot_longread_depth.py \

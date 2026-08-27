@@ -25,8 +25,8 @@ def mv(file, output):
 
 #find number of trios in ped file
 #find number of trios in ped file
-ped=pd.read_csv(ped_file,sep='\t').iloc[:,:6]
-ped.columns = ['FamilyID','IndividualID','MotherID','FatherID','Sex','Affected']
+ped=pd.read_csv(ped_file,sep='\t',header=None).iloc[:,:6]
+ped.columns = ['FamilyID','IndividualID','FatherID','MotherID','Sex','Affected']
 ped[['FamilyID','IndividualID','MotherID','FatherID']] = ped[['FamilyID','IndividualID','MotherID','FatherID']].astype(str)
 
 colnames = colnames=['sample', 'crai', 'cram']
