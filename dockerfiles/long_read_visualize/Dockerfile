@@ -8,8 +8,6 @@
 # gcloud/gsutil are present so tasks can auth to and stream gs:// BAMs
 # (`export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`),
 # matching the pattern used by the existing GATK-SV rdtest image.
-#
-# Scripts land at /src/variant-interpretation/scripts/ to match the other repo images.
 
 FROM google/cloud-sdk:slim
 
@@ -41,7 +39,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # Repo scripts at the conventional path
 RUN git clone --depth 1 --branch main \
-        https://github.com/talkowski-lab/variant-interpretation.git \
+        https://github.com/yuliamostovoy/variant-interpretation.git \
         /src/variant-interpretation
 
 ENV MPLBACKEND=Agg
