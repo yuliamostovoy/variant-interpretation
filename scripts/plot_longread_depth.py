@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Long-read read-depth plot for CNV (DEL/DUP) loci — the replacement for GATK-SV's RdTest
-in the long-read visualization workflow.
+Long-read read-depth plot for CNV (DEL/DUP) loci.
 
 For each variant in the per-family BED it draws a normalized-depth profile across the
 region +/- flank, one line per family sample (carriers highlighted, others gray), shades
@@ -180,8 +179,7 @@ def main():
             ax.set_ylim(0, 3)
             ax.set_xlabel(f"{chrom} position")
             ax.set_ylabel("normalized depth")
-            # SV info is rendered as a header on the combined figure (concat_igv_depth.py),
-            # not here, so IGV-only and depth panels share one consistent header.
+            # SV info is rendered as a header on the combined figure (concat_igv_depth.py)
             ax.legend(fontsize=6, ncol=2, loc="upper right")
             fig.tight_layout()
             fig.savefig(os.path.join(args.outdir, f"{args.family}_{vid}.png"), dpi=120)

@@ -2,14 +2,9 @@ version 1.0
 
 ##########################################################################################
 ##
-## Long-read / BAM adaptation of IgvCramPlots.wdl.
-##
-## Differences from the short-read CRAM version:
-##   - Aligned reads are BAM (+ .bai) instead of CRAM (+ .crai).
-##   - Region subsetting uses `samtools view -b` (no CRAM reference decode needed).
-##   - The IGV batch script is generated in long-read mode (`--long_read`), which drops
-##     `viewaspairs` (a paired-end concept meaningless for long reads), and loads the
-##     reference genome explicitly (`--genome`) so an arbitrary reference renders.
+## IGV screenshots from long-read BAMs: subsets each BAM to the plotted regions with
+## `samtools view -b`, then generates IGV batch scripts (long-read mode: no `viewaspairs`,
+## reference genome loaded via `--genome`) and captures snapshots under xvfb.
 ##
 ##########################################################################################
 
@@ -38,6 +33,9 @@ workflow IGV {
         Array[String]? bais_parse
         File? updated_sample_bam_bai
         File? sample_bam_bai
+        Array[File] annotation_beds = []
+        Array[String] annotation_names = []
+        File? gene_track
     }
 
     if (file_localization) {
@@ -71,6 +69,9 @@ workflow IGV {
                 reference_index = reference_index,
                 igv_max_window = igv_max_window,
                 long_read = long_read,
+                annotation_beds = annotation_beds,
+                annotation_names = annotation_names,
+                gene_track = gene_track,
                 igv_docker = igv_docker,
                 runtime_attr_override = runtime_attr_igv
         }
@@ -93,6 +94,9 @@ workflow IGV {
                 reference_index = reference_index,
                 igv_max_window = igv_max_window,
                 long_read = long_read,
+                annotation_beds = annotation_beds,
+                annotation_names = annotation_names,
+                gene_track = gene_track,
                 igv_docker = igv_docker,
                 runtime_attr_override = runtime_attr_igv
         }
@@ -117,6 +121,9 @@ task runIGV_whole_genome_localize{
             File sample_bam_bai
             String buffer
             Boolean long_read
+            Array[File] annotation_beds = []
+            Array[String] annotation_names = []
+            File? gene_track
             String igv_docker
             RuntimeAttr? runtime_attr_override
         }
@@ -154,7 +161,7 @@ task runIGV_whole_genome_localize{
             do
                 let "i=$i+1"
                 echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read}
+                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} ~{"--genes " + gene_track} --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
                 bash pe.$i.sh
                 xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -b pe.$i.txt
             done < ~{varfile}
@@ -191,6 +198,9 @@ task runIGV_whole_genome_parse{
         File updated_sample_bam_bai
         String buffer
         Boolean long_read
+        Array[File] annotation_beds = []
+        Array[String] annotation_names = []
+        File? gene_track
         String igv_docker
         RuntimeAttr? runtime_attr_override
     }
@@ -215,12 +225,12 @@ task runIGV_whole_genome_parse{
             cat ~{varfile} | cut -f1-3 | awk '{if (($3-$2)+int(($3-$2)*1.5)>=~{igv_max_window}) print $1"\t"$2-~{buffer}"\t"$2+~{buffer} "\n" $1"\t"$3-~{buffer}"\t"$3+~{buffer};
                 else print $1"\t"($2-int(($3-$2)*0.25))-~{buffer}"\t"$3+int(($3-$2)*0.25)+~{buffer}}' | sort -k1,1 -k2,2n | bgzip -c > regions.bed.gz
             tabix -p bed regions.bed.gz
-            #subset bam files to the plotted regions (cheaper than localizing whole long-read BAMs)
+            # subset each remote BAM to the plotted regions
             while read sample bai bam new_bam new_bai
             do
                 gsutil cp $bai $( basename $bam | sed 's/\.bam$/.bai/g' )
                 export GCS_OAUTH_TOKEN=`gcloud auth application-default print-access-token`
-                # name the subset by sample id so makeigvpesr can map track -> sample reliably
+                # name the subset by sample id so makeigvpesr maps each track to its sample
                 samtools view -h -b -o $sample.bam $bam -L regions.bed.gz -M
                 samtools index $sample.bam
             done<~{updated_sample_bam_bai}
@@ -231,7 +241,7 @@ task runIGV_whole_genome_parse{
             do
                 let "i=$i+1"
                 echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} --status_labels
+                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} --status_labels ~{"--genes " + gene_track} --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
                 bash pe.$i.sh
                 xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -b pe.$i.txt
             done < ~{varfile}

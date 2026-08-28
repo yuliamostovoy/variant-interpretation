@@ -1,12 +1,6 @@
 import sys,os,argparse
 import numpy as np
 import pandas as pd
-#[_,varfile,buff,fasta]=sys.argv #assume the varfile has *.bed in the end
-# Usage
-# python makeigvpesr_trio.py varfile fasta sample ped cram_list buffer chromosome
-# bash IL.DUP.HG00514.V2.sh
-# bash igv.sh -b IL.DUP.HG00514.V2.txt
-
 
 parser = argparse.ArgumentParser("makeigvsplit_trio.py")
 parser.add_argument('-v', '--varfile', type=str, help='variant file including CHR, POS, END and SVID')
@@ -29,6 +23,9 @@ parser.add_argument('-m', '--igvmaxwindow', type=str, help='max length of SV to 
 parser.add_argument('--long_read', dest='long_read', action='store_true', help='render for long reads: omit viewaspairs (paired-end display is meaningless for long reads)')
 parser.add_argument('--genome', type=str, help='reference genome fasta to load in IGV (needed for BAM/arbitrary references)', default=None)
 parser.add_argument('--status_labels', dest='status_labels', action='store_true', help='label/order each BAM track by affected+carrier status (long-read); requires the varfile 6th column to hold the per-variant carrier sample list')
+parser.add_argument('--annotation_beds', nargs='*', default=[], help='optional reference BED files to load as IGV feature tracks (e.g. segdups, N-gaps)')
+parser.add_argument('--annotation_names', nargs='*', default=[], help='track labels for --annotation_beds, in the same order')
+parser.add_argument('--genes', type=str, default=None, help='optional gene annotation file (gtf/gff3/bed/refGene) to load as an IGV gene track')
 
 args = parser.parse_args()
 
@@ -42,6 +39,9 @@ igv_max_window = args.igvmaxwindow
 long_read = args.long_read
 genome = args.genome
 status_labels = args.status_labels
+annotation_beds = args.annotation_beds
+annotation_names = args.annotation_names
+genes = args.genes
 
 
 def status_label(sample, affected, carriers):
@@ -125,7 +125,7 @@ ped['FatherID'] = ped['FatherID'].astype(str)
 ped['MotherID'] = ped['MotherID'].astype(str)
 ped.Affected = pd.to_numeric(ped.Affected)
 affected_samples = set(ped.loc[ped['Affected'] == 2, 'IndividualID'].astype(str))
-# status mode reorders per-variant below; skip the legacy affected-to-top reorder
+# status mode reorders per-variant below; skip this whole-family reorder
 for sample_id in (samples_list if not status_labels else []):
 	if(ped.loc[(ped['IndividualID'] == sample_id)]['Affected'].iloc[0] == 2):
 		if((ped.loc[(ped['IndividualID'] == sample_id)]['MotherID'].iloc[0] != '0' )| (ped.loc[(ped['IndividualID'] == sample_id)]['FatherID'].iloc[0] != '0' )):
@@ -193,6 +193,21 @@ with open(bamfiscript,'w') as h:
                 else:
                     for cram in cram_list:
                         g.write('load '+cram+'\n')
+
+                # reference annotation tracks (segdups, N-gaps, ...) so IGV-only variants
+                # still show them; symlink to the given name for a clean track label
+                for i, abed in enumerate(annotation_beds):
+                    ext = ".bed.gz" if abed.endswith(".bed.gz") else (os.path.splitext(abed)[1] or ".bed")
+                    if annotation_names and i < len(annotation_names):
+                        alink = annotation_names[i] + ext
+                        if not os.path.lexists(alink):
+                            os.symlink(os.path.abspath(abed), alink)
+                        g.write('load ' + alink + '\n')
+                    else:
+                        g.write('load ' + os.path.abspath(abed) + '\n')
+                # gene annotation track
+                if genes:
+                    g.write('load ' + os.path.abspath(genes) + '\n')
 
                 if Length_total<int(igv_max_window):
                     if Length_total<1000:

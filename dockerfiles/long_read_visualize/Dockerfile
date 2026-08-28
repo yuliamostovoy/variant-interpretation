@@ -10,8 +10,7 @@
 #   - RunVisualizePlotsLongRead.concat_plots     : python + Pillow
 #
 # gcloud/gsutil are present so tasks can auth to and stream gs:// BAMs
-# (`export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`),
-# matching the pattern used by the existing GATK-SV rdtest image.
+# (`export GCS_OAUTH_TOKEN=$(gcloud auth application-default print-access-token)`).
 #
 # Scripts land at /src/variant-interpretation/scripts/ to match the WDL task paths.
 
@@ -65,7 +64,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # Repo scripts at the conventional path. Pin a commit so bumping VI_COMMIT busts this
 # layer's cache — a plain clone of main is cached by command string and would rebuild stale.
-ARG VI_COMMIT=ef0f12e50f70d867df88a041d5961b89f1914169
+ARG VI_COMMIT=aa804891976bf912d7ef34202dce22254d3b4ab9
 RUN git clone https://github.com/yuliamostovoy/variant-interpretation.git \
         /src/variant-interpretation \
     && git -C /src/variant-interpretation checkout ${VI_COMMIT}

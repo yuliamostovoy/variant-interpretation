@@ -2,16 +2,11 @@ version 1.0
 
 ##########################################################################################
 ##
-## Component 1: top-level long-read visualization workflow.
-##
-## Long-read (PacBio HiFi) adaptation of RunVisualizePlots.wdl for data NOT processed with
-## GATK-SV. Variants come from Sniffles2/pbsv (SV), HiFiCNV (CNV) and DeepVariant->GLNexus
-## (SNV/indel); the user supplies a curated subset as a bcftools-query TSV.
-##
-## Tracks (vs the GATK-SV original):
-##   - IGV reads track over aligned BAMs (kept, generalized to long reads).
-##   - mosdepth-based depth track for DEL/DUP (replaces the GATK-SV RdTest bincov track).
-##   - The GATK-SV PE/SR-evidence track and complex-SV bed splitting are dropped.
+## Top-level long-read (PacBio HiFi) visualization workflow. The user supplies a curated
+## subset of variants as a bcftools-query TSV; it produces:
+##   - an IGV reads track over aligned BAMs, and
+##   - a mosdepth-based depth track for DEL/DUP,
+## combined per variant with an SV-info header.
 ##
 ##########################################################################################
 
@@ -47,6 +42,8 @@ workflow VisualizePlotsLongRead {
         # with matching labels in the same order
         Array[File] annotation_beds = []
         Array[String] annotation_names = []
+        # optional gene annotation (gtf/gff3/bed/refGene) shown as an IGV gene track
+        File? gene_track
 
         String sv_base_mini_docker = "us.gcr.io/broad-dsde-methods/gatk-sv/sv-base-mini:2024-10-25-v0.29-beta-5ea22a52"
         String long_read_visualize_docker = "quay.io/ymostovoy/lr-visualize:latest"
@@ -97,6 +94,9 @@ workflow VisualizePlotsLongRead {
                 file_localization = file_localization,
                 requester_pays = requester_pays,
                 long_read = long_read,
+                annotation_beds = annotation_beds,
+                annotation_names = annotation_names,
+                gene_track = gene_track,
                 prefix = prefix,
                 buffer = buffer_,
                 sv_base_mini_docker = sv_base_mini_docker,

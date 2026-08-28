@@ -2,14 +2,9 @@ version 1.0
 
 ##########################################################################################
 ##
-## Component 4: long-read read-depth track. Replaces RdVisualization.wdl (GATK-SV RdTest).
-##
-## Instead of GATK-SV batch bincov matrices / medianfiles, depth is computed on demand with
-## mosdepth over the plotted CNV loci from each sample's BAM. Normalization is local
-## (per-sample median over flanking windows), so no batch/median/outlier inputs are needed.
-##
-## Output shape (per-variant PNGs, tarred) matches the RD track so the downstream
-## integrate + concatenate steps are reused unchanged.
+## Long-read read-depth track for CNV (DEL/DUP) loci. Depth is computed on demand with
+## mosdepth over the plotted loci from each sample's BAM; normalization is local (per-sample
+## median over flanking windows). Emits one PNG per variant, tarred.
 ##
 ##########################################################################################
 

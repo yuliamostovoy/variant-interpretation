@@ -2,11 +2,9 @@ version 1.0
 
 ##########################################################################################
 ##
-## Component 2: input adapter for the long-read visualization workflow.
-##
-## Takes a user-curated variant list (the limited subset to be plotted) and emits the
-## canonical bgzipped 6-column BED (chrom,start,end,ID,svtype,samples) with a header line
-## that the IGV / depth tracks consume.
+## Input adapter: takes a user-curated variant list and emits the canonical bgzipped
+## 6-column BED (chrom,start,end,ID,svtype,samples) with a header line that the IGV / depth
+## tracks consume.
 ##
 ##########################################################################################
 

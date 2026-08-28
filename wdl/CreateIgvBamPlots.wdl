@@ -2,12 +2,8 @@ version 1.0
 
 ##########################################################################################
 ##
-## Long-read / BAM adaptation of CreateIgvCramPlots.wdl.
-##
-## Fans out over families (or single samples), subsets the per-family aligned reads, and
-## produces IGV screenshots at each variant locus using the BAM/long-read leaf workflow.
-## The GATK-SV complex-SV bed splitting (updateCpxBed) is intentionally omitted: long-read
-## SV callers (Sniffles2 / pbsv) do not emit that CPX format.
+## Fans out over families (or single samples), subsets the per-family aligned BAMs, and
+## produces IGV screenshots at each variant locus via the BAM leaf workflow.
 ##
 ##########################################################################################
 
@@ -26,6 +22,9 @@ workflow IGV_all_samples {
         Boolean file_localization
         Boolean requester_pays
         Boolean long_read
+        Array[File] annotation_beds = []
+        Array[String] annotation_names = []
+        File? gene_track
         String prefix
         String buffer
         String sv_base_mini_docker
@@ -92,6 +91,9 @@ workflow IGV_all_samples {
                     file_localization = file_localization,
                     requester_pays = requester_pays,
                     long_read = long_read,
+                    annotation_beds = annotation_beds,
+                    annotation_names = annotation_names,
+                    gene_track = gene_track,
                     igv_max_window = igv_max_window,
                     bams_localize = generate_per_family_sample_bam_bai.per_family_bams_files,
                     bais_localize = generate_per_family_sample_bam_bai.per_family_bais_files,
@@ -114,6 +116,9 @@ workflow IGV_all_samples {
                     file_localization = file_localization,
                     requester_pays = requester_pays,
                     long_read = long_read,
+                    annotation_beds = annotation_beds,
+                    annotation_names = annotation_names,
+                    gene_track = gene_track,
                     igv_max_window = igv_max_window,
                     bams_parse = generate_per_family_sample_bam_bai.per_family_bams_strings,
                     bais_parse = generate_per_family_sample_bam_bai.per_family_bais_strings,
