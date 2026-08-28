@@ -36,6 +36,7 @@ workflow IGV {
         Array[File] annotation_beds = []
         Array[String] annotation_names = []
         File? gene_track
+        File? gene_track_index
     }
 
     if (file_localization) {
@@ -72,6 +73,7 @@ workflow IGV {
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 gene_track = gene_track,
+                gene_track_index = gene_track_index,
                 igv_docker = igv_docker,
                 runtime_attr_override = runtime_attr_igv
         }
@@ -97,6 +99,7 @@ workflow IGV {
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 gene_track = gene_track,
+                gene_track_index = gene_track_index,
                 igv_docker = igv_docker,
                 runtime_attr_override = runtime_attr_igv
         }
@@ -124,6 +127,7 @@ task runIGV_whole_genome_localize{
             Array[File] annotation_beds = []
             Array[String] annotation_names = []
             File? gene_track
+            File? gene_track_index
             String igv_docker
             RuntimeAttr? runtime_attr_override
         }
@@ -156,14 +160,40 @@ task runIGV_whole_genome_localize{
                 mv $bai $new_bai
             done<changed_sample_crai_cram.txt
 
+            # gene track: prefer a user-supplied bgzipped + tabix-indexed file (IGV then
+            # region-queries only the visible locus); otherwise index it once here
+            GENES_ARG=""
+            GENE_TRACK="~{default='' gene_track}"
+            GENE_TBI="~{default='' gene_track_index}"
+            if [ -n "$GENE_TRACK" ]; then
+                if [ -n "$GENE_TBI" ]; then
+                    ln -sf "$GENE_TBI" "$GENE_TRACK.tbi"
+                    GENES_ARG="--genes $GENE_TRACK"
+                else
+                    low=$( echo "$GENE_TRACK" | tr '[:upper:]' '[:lower:]' )
+                    case "$low" in
+                        *.gtf|*.gtf.gz|*.gff|*.gff.gz|*.gff3|*.gff3.gz)
+                            zcat -f "$GENE_TRACK" | grep -v '^#' | sort -k1,1 -k4,4n | bgzip > genes.idx.gtf.gz
+                            tabix -p gff genes.idx.gtf.gz
+                            GENES_ARG="--genes genes.idx.gtf.gz" ;;
+                        *.bed|*.bed.gz)
+                            zcat -f "$GENE_TRACK" | grep -v '^#' | sort -k1,1 -k2,2n | bgzip > genes.idx.bed.gz
+                            tabix -p bed genes.idx.bed.gz
+                            GENES_ARG="--genes genes.idx.bed.gz" ;;
+                        *)
+                            GENES_ARG="--genes $GENE_TRACK" ;;
+                    esac
+                fi
+            fi
+
             i=0
             while read -r line
             do
                 let "i=$i+1"
                 echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} ~{"--genes " + gene_track} --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
+                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
                 bash pe.$i.sh
-                xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -b pe.$i.txt
+                xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{reference} -b pe.$i.txt
             done < ~{varfile}
             tar -czf ~{family}_pe_igv_plots.tar.gz pe_igv_plots
 
@@ -201,6 +231,7 @@ task runIGV_whole_genome_parse{
         Array[File] annotation_beds = []
         Array[String] annotation_names = []
         File? gene_track
+        File? gene_track_index
         String igv_docker
         RuntimeAttr? runtime_attr_override
     }
@@ -236,14 +267,40 @@ task runIGV_whole_genome_parse{
             done<~{updated_sample_bam_bai}
             ls *.bam > bams.txt
 
+            # gene track: prefer a user-supplied bgzipped + tabix-indexed file (IGV then
+            # region-queries only the visible locus); otherwise index it once here
+            GENES_ARG=""
+            GENE_TRACK="~{default='' gene_track}"
+            GENE_TBI="~{default='' gene_track_index}"
+            if [ -n "$GENE_TRACK" ]; then
+                if [ -n "$GENE_TBI" ]; then
+                    ln -sf "$GENE_TBI" "$GENE_TRACK.tbi"
+                    GENES_ARG="--genes $GENE_TRACK"
+                else
+                    low=$( echo "$GENE_TRACK" | tr '[:upper:]' '[:lower:]' )
+                    case "$low" in
+                        *.gtf|*.gtf.gz|*.gff|*.gff.gz|*.gff3|*.gff3.gz)
+                            zcat -f "$GENE_TRACK" | grep -v '^#' | sort -k1,1 -k4,4n | bgzip > genes.idx.gtf.gz
+                            tabix -p gff genes.idx.gtf.gz
+                            GENES_ARG="--genes genes.idx.gtf.gz" ;;
+                        *.bed|*.bed.gz)
+                            zcat -f "$GENE_TRACK" | grep -v '^#' | sort -k1,1 -k2,2n | bgzip > genes.idx.bed.gz
+                            tabix -p bed genes.idx.bed.gz
+                            GENES_ARG="--genes genes.idx.bed.gz" ;;
+                        *)
+                            GENES_ARG="--genes $GENE_TRACK" ;;
+                    esac
+                fi
+            fi
+
             i=0
             while read -r line
             do
                 let "i=$i+1"
                 echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} --status_labels ~{"--genes " + gene_track} --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
+                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} --status_labels $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
                 bash pe.$i.sh
-                xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -b pe.$i.txt
+                xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{reference} -b pe.$i.txt
             done < ~{varfile}
             tar -czf ~{family}_pe_igv_plots.tar.gz pe_igv_plots
 

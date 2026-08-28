@@ -42,8 +42,10 @@ workflow VisualizePlotsLongRead {
         # with matching labels in the same order
         Array[File] annotation_beds = []
         Array[String] annotation_names = []
-        # optional gene annotation (gtf/gff3/bed/refGene) shown as an IGV gene track
+        # optional gene annotation shown as an IGV gene track; supply a bgzipped, tabix-indexed
+        # file as gene_track plus its .tbi as gene_track_index (otherwise it is indexed at runtime)
         File? gene_track
+        File? gene_track_index
 
         String sv_base_mini_docker = "us.gcr.io/broad-dsde-methods/gatk-sv/sv-base-mini:2024-10-25-v0.29-beta-5ea22a52"
         String long_read_visualize_docker = "quay.io/ymostovoy/lr-visualize:latest"
@@ -97,6 +99,7 @@ workflow VisualizePlotsLongRead {
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 gene_track = gene_track,
+                gene_track_index = gene_track_index,
                 prefix = prefix,
                 buffer = buffer_,
                 sv_base_mini_docker = sv_base_mini_docker,
