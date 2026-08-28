@@ -25,6 +25,7 @@ workflow LongReadDepthPlot {
         Array[File] annotation_beds = []      # optional regions to highlight (N-gaps, segdups, ...)
         Array[String] annotation_names = []   # labels, same order as annotation_beds
         Int? flank
+        Float? flank_frac
         Int? window
         String sv_base_mini_docker
         String long_read_visualize_docker
@@ -33,6 +34,7 @@ workflow LongReadDepthPlot {
     }
 
     Int flank_ = select_first([flank, 5000])
+    Float flank_frac_ = select_first([flank_frac, 0.1])
     Int window_ = select_first([window, 250])
 
     if (defined(fam_ids)) {
@@ -68,6 +70,7 @@ workflow LongReadDepthPlot {
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 flank = flank_,
+                flank_frac = flank_frac_,
                 window = window_,
                 prefix = prefix,
                 long_read_visualize_docker = long_read_visualize_docker,
@@ -184,6 +187,7 @@ task depth_plot {
         Array[File] annotation_beds = []
         Array[String] annotation_names = []
         Int flank
+        Float flank_frac
         Int window
         String prefix
         String long_read_visualize_docker
@@ -213,7 +217,7 @@ task depth_plot {
 
         # regions (+/- flank) and fine windows for mosdepth
         cut -f1-3 ~{per_family_bed} \
-            | awk -v F=~{flank} '{s=$2-F; if(s<0)s=0; print $1"\t"s"\t"$3+F}' \
+            | awk -v F=~{flank} -v FR=~{flank_frac} '{L=$3-$2; f=(L*FR>F)?int(L*FR):F; s=$2-f; if(s<0)s=0; print $1"\t"s"\t"$3+f}' \
             | sort -k1,1 -k2,2n | bedtools merge -i - > regions.bed
         bedtools makewindows -b regions.bed -w ~{window} > windows.bed
 
@@ -230,6 +234,7 @@ task depth_plot {
             --ped ~{ped_file} \
             --family ~{family} \
             --flank ~{flank} \
+            --flank-frac ~{flank_frac} \
             --depth-dir . \
             --outdir rd_plots \
             --annotation-beds ~{sep=" " annotation_beds} \

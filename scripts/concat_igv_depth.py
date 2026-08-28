@@ -1,57 +1,154 @@
 #!/usr/bin/env python3
 """
-Stack the IGV screenshot (top) and the long-read depth plot (bottom) for each variant that
-has both, into a single combined image. Pairs plots by their shared basename
-`{family}_{ID}.png`, which both the IGV track (makeigvpesr.py) and the depth track
+Assemble one combined image per variant: an SV-info header banner on top, then the IGV
+screenshot, then (for DEL/DUP) the long-read depth plot. Plots are paired by their shared
+basename `{family}_{ID}.png`, which both the IGV track (makeigvpesr.py) and the depth track
 (plot_longread_depth.py) emit.
 
-Variants without a depth plot (e.g. SNV/indel, SV that isn't DEL/DUP) simply carry their
-IGV plot through unchanged, so the output directory holds one image per plotted variant.
+Variants without a depth plot (SNV/indel, non-DEL/DUP SVs) carry their IGV plot through with
+just the header, so every plotted variant gets the same header (ID, length, SVTYPE,
+coords). The header text is looked up from --varfile (the canonical 6-col BED) by matching
+each image's ID; if no varfile is given, images are emitted without a header.
 """
 
 import argparse
 import glob
+import gzip
 import os
 import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+
+HEADER_H = 60
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+]
 
 
-def vstack(top_path, bottom_path, out_path):
-    top = Image.open(top_path).convert("RGB")
-    bottom = Image.open(bottom_path).convert("RGB")
-    w = min(top.width, bottom.width)
+def _load_font(size=28):
+    for path in _FONT_CANDIDATES:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
 
-    def scale(img):
-        if img.width == w:
-            return img
-        h = int(img.height * w / img.width)
-        return img.resize((w, h))
 
+def vstack_imgs(top, bottom):
+    # align to the WIDEST pane (upscale the narrower one) so the high-res IGV snapshot is
+    # never shrunk down to the depth plot's width
+    w = max(top.width, bottom.width)
+    scale = lambda im: im if im.width == w else im.resize((w, int(im.height * w / im.width)))
     top, bottom = scale(top), scale(bottom)
-    combined = Image.new("RGB", (w, top.height + bottom.height), (255, 255, 255))
-    combined.paste(top, (0, 0))
-    combined.paste(bottom, (0, top.height))
-    combined.save(out_path)
+    out = Image.new("RGB", (w, top.height + bottom.height), (255, 255, 255))
+    out.paste(top, (0, 0))
+    out.paste(bottom, (0, top.height))
+    return out
 
 
-def hstack(paths, out_path):
-    imgs = [Image.open(p).convert("RGB") for p in paths]
-    h = min(im.height for im in imgs)
-    scaled = [im if im.height == h else im.resize((int(im.width * h / im.height), h))
-              for im in imgs]
-    combined = Image.new("RGB", (sum(im.width for im in scaled), h), (255, 255, 255))
-    x = 0
-    for im in scaled:
-        combined.paste(im, (x, 0))
-        x += im.width
-    combined.save(out_path)
+def hstack_imgs(left, right):
+    # align to the TALLEST pane (upscale the shorter one) so neither snapshot is shrunk
+    h = max(left.height, right.height)
+    scale = lambda im: im if im.height == h else im.resize((int(im.width * h / im.height), h))
+    left, right = scale(left), scale(right)
+    out = Image.new("RGB", (left.width + right.width, h), (255, 255, 255))
+    out.paste(left, (0, 0))
+    out.paste(right, (left.width, 0))
+    return out
+
+
+def header_img(text, width):
+    img = Image.new("RGB", (width, HEADER_H), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.text((20, HEADER_H // 2 - 14), text, fill=(0, 0, 0), font=_load_font())
+    return img
+
+
+def load_variant_info(varfile):
+    """{ID: (chrom, start, end, svtype)} from the canonical 6-col BED (maybe gzipped)."""
+    info = {}
+    opener = gzip.open if varfile.endswith(".gz") else open
+    with opener(varfile, "rt") as fh:
+        for line in fh:
+            if not line.strip() or line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 5:
+                continue
+            try:
+                info[f[3]] = (f[0], int(f[1]), int(f[2]), f[4])
+            except ValueError:
+                continue
+    return info
+
+
+def header_text_for(stem, info):
+    """Match `{family}_{ID}` stem to a variant ID (longest ID that is the stem or a
+    `_ID` suffix of it) and format the header, or None if unmatched."""
+    vid = None
+    if stem in info:
+        vid = stem
+    else:
+        cands = [i for i in info if stem.endswith("_" + i)]
+        if cands:
+            vid = max(cands, key=len)
+    if vid is None:
+        return None
+    chrom, start, end, svtype = info[vid]
+    return f"{vid}   {end - start:,} bp   {svtype}   {chrom}:{start}-{end}"
+
+
+def finalize(body, stem, info, out_path):
+    if info:
+        text = header_text_for(stem, info)
+        if text:
+            body = vstack_imgs(header_img(text, body.width), body)
+    body.save(out_path)
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--igv-dir", required=True, help="dir of IGV {family}_{ID}.png plots")
+    ap.add_argument("--depth-dir", required=True, help="dir of depth {family}_{ID}.png plots")
+    ap.add_argument("--outdir", required=True)
+    ap.add_argument("--varfile", default=None,
+                    help="canonical 6-col BED for the SV-info header (chrom,start,end,ID,svtype,samples)")
+    args = ap.parse_args()
+
+    os.makedirs(args.outdir, exist_ok=True)
+    info = load_variant_info(args.varfile) if args.varfile else {}
+
+    igv_plots = collect_igv_plots(args.igv_dir)
+    depth_plots = {os.path.basename(p): p for p in glob.glob(os.path.join(args.depth_dir, "*.png"))}
+
+    n_combined = n_igv_only = 0
+    for name, igv_path in sorted(igv_plots.items()):
+        stem = name[:-len(".png")]
+        out_path = os.path.join(args.outdir, name)
+        if name in depth_plots:
+            body = vstack_imgs(Image.open(igv_path).convert("RGB"),
+                               Image.open(depth_plots[name]).convert("RGB"))
+            n_combined += 1
+        else:
+            body = Image.open(igv_path).convert("RGB")
+            n_igv_only += 1
+        finalize(body, stem, info, out_path)
+
+    # depth plots with no matching IGV plot (shouldn't happen, but don't drop them silently)
+    for name, depth_path in sorted(depth_plots.items()):
+        if name not in igv_plots:
+            finalize(Image.open(depth_path).convert("RGB"), name[:-len(".png")], info,
+                     os.path.join(args.outdir, name))
+            sys.stderr.write(f"WARNING: depth plot {name} had no matching IGV plot\n")
+
+    sys.stderr.write(f"Combined {n_combined}, IGV-only {n_igv_only}, written to {args.outdir}\n")
 
 
 def collect_igv_plots(igv_dir):
     """Return {`{stem}.png`: path}, first merging any `{stem}.left.png` + `{stem}.right.png`
     breakpoint panes (emitted by makeigvpesr.py for large SVs) into one `{stem}.png` so they
-    can pair with the single depth plot of the same name."""
+    can pair with the single depth plot of the same name. Left/right are placed SIDE BY SIDE
+    (left | right) at full resolution; the depth track below is upscaled to span both."""
     plain = {}   # stem -> path
     sides = {}   # stem -> {"left": path, "right": path}
     for p in glob.glob(os.path.join(igv_dir, "*.png")):
@@ -68,45 +165,12 @@ def collect_igv_plots(igv_dir):
             continue
         ordered = [d[k] for k in ("left", "right") if k in d]
         out = os.path.join(igv_dir, stem + ".png")
-        if len(ordered) == 1:
-            Image.open(ordered[0]).convert("RGB").save(out)
-        else:
-            hstack(ordered, out)     # left | right
+        imgs = [Image.open(p).convert("RGB") for p in ordered]
+        merged = imgs[0] if len(imgs) == 1 else hstack_imgs(imgs[0], imgs[1])
+        merged.save(out)
         plain[stem] = out
 
     return {stem + ".png": path for stem, path in plain.items()}
-
-
-def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--igv-dir", required=True, help="dir of IGV {family}_{ID}.png plots")
-    ap.add_argument("--depth-dir", required=True, help="dir of depth {family}_{ID}.png plots")
-    ap.add_argument("--outdir", required=True)
-    args = ap.parse_args()
-
-    os.makedirs(args.outdir, exist_ok=True)
-
-    igv_plots = collect_igv_plots(args.igv_dir)
-    depth_plots = {os.path.basename(p): p for p in glob.glob(os.path.join(args.depth_dir, "*.png"))}
-
-    n_combined = n_igv_only = 0
-    for name, igv_path in sorted(igv_plots.items()):
-        out_path = os.path.join(args.outdir, name)
-        if name in depth_plots:
-            vstack(igv_path, depth_plots[name], out_path)
-            n_combined += 1
-        else:
-            Image.open(igv_path).convert("RGB").save(out_path)
-            n_igv_only += 1
-
-    # depth plots with no matching IGV plot (shouldn't happen, but don't drop them silently)
-    for name, depth_path in sorted(depth_plots.items()):
-        if name not in igv_plots:
-            Image.open(depth_path).convert("RGB").save(os.path.join(args.outdir, name))
-            sys.stderr.write(f"WARNING: depth plot {name} had no matching IGV plot\n")
-
-    sys.stderr.write(f"Combined {n_combined}, IGV-only {n_igv_only}, written to {args.outdir}\n")
 
 
 if __name__ == "__main__":

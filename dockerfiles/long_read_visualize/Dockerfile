@@ -65,7 +65,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # Repo scripts at the conventional path. Pin a commit so bumping VI_COMMIT busts this
 # layer's cache — a plain clone of main is cached by command string and would rebuild stale.
-ARG VI_COMMIT=19cb5c2c0c7205bb66c7a9de67a95e8277c0e8f3
+ARG VI_COMMIT=ef0f12e50f70d867df88a041d5961b89f1914169
 RUN git clone https://github.com/yuliamostovoy/variant-interpretation.git \
         /src/variant-interpretation \
     && git -C /src/variant-interpretation checkout ${VI_COMMIT}

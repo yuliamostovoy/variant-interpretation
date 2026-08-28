@@ -167,8 +167,12 @@ with open(bamfiscript,'w') as h:
                     if Length > 50:
                         g.write('preference SAM.HIDE_SMALL_INDEL true\n')
                         g.write('preference SAM.SMALL_INDEL_BP_THRESHOLD 5\n')
+                        # also stop labeling sub-5bp insertions (SAM.LARGE_INSERTIONS_THRESOLD
+                        # is IGV's actual, misspelled key) so hidden indels don't leave markers
+                        g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 5\n')
                     else:
                         g.write('preference SAM.HIDE_SMALL_INDEL false\n')
+                        g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 1\n')
 
                 if status_labels:
                     carriers = set(dat[5].split(',')) if len(dat) > 5 and dat[5] else set()

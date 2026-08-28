@@ -97,7 +97,9 @@ def main():
     ap.add_argument("--ped", required=True)
     ap.add_argument("--family", required=True)
     ap.add_argument("--flank", type=int, default=5000,
-                    help="bp of flank shown on each side of the interval")
+                    help="minimum bp of flank shown on each side of the interval (floor)")
+    ap.add_argument("--flank-frac", type=float, default=0.1,
+                    help="flank as a fraction of event length; per-variant flank = max(--flank, frac*SVLEN)")
     ap.add_argument("--depth-dir", default=".",
                     help="directory containing {sample}.regions.bed.gz files")
     ap.add_argument("--outdir", default="rd_plots")
@@ -135,8 +137,11 @@ def main():
             if svtype not in ("DEL", "DUP"):
                 continue
 
-            lo, hi = max(0, start - args.flank), end + args.flank
-            fig, ax = plt.subplots(figsize=(10, 4))
+            flank = max(args.flank, int(args.flank_frac * (end - start)))
+            lo, hi = max(0, start - flank), end + flank
+            # 16in x 120dpi = 1920px wide, matching the IGV snapshot width so the combined
+            # figure needs no rescaling
+            fig, ax = plt.subplots(figsize=(16, 4))
 
             for sample, windows in sorted(depth.items()):
                 factor = norm_factor(windows, chrom, start, end)
@@ -175,7 +180,8 @@ def main():
             ax.set_ylim(0, 3)
             ax.set_xlabel(f"{chrom} position")
             ax.set_ylabel("normalized depth")
-            ax.set_title(f"{vid}  {end - start:,} bp  {svtype}  {chrom}:{start}-{end}")
+            # SV info is rendered as a header on the combined figure (concat_igv_depth.py),
+            # not here, so IGV-only and depth panels share one consistent header.
             ax.legend(fontsize=6, ncol=2, loc="upper right")
             fig.tight_layout()
             fig.savefig(os.path.join(args.outdir, f"{args.family}_{vid}.png"), dpi=120)

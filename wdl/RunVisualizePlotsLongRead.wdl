@@ -41,6 +41,7 @@ workflow VisualizePlotsLongRead {
         Int? igv_max_window
         String? buffer
         Int? depth_flank
+        Float? depth_flank_frac
         Int? depth_window
         # optional reference BEDs to highlight on the depth plots (e.g. N-gaps, segdups),
         # with matching labels in the same order
@@ -119,6 +120,7 @@ workflow VisualizePlotsLongRead {
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 flank = depth_flank,
+                flank_frac = depth_flank_frac,
                 window = depth_window,
                 sv_base_mini_docker = sv_base_mini_docker,
                 long_read_visualize_docker = long_read_visualize_docker,
@@ -133,6 +135,7 @@ workflow VisualizePlotsLongRead {
             input:
                 igv_tar = select_first([igv_plots.tar_gz_pe]),
                 depth_tar = select_first([depth_plots.Plots]),
+                varfile = reformat_variants.varfile,
                 prefix = prefix,
                 long_read_visualize_docker = long_read_visualize_docker,
                 runtime_attr_override = runtime_attr_concat
@@ -178,12 +181,13 @@ task concat_plots {
     input {
         File igv_tar
         File depth_tar
+        File varfile
         String prefix
         String long_read_visualize_docker
         RuntimeAttr? runtime_attr_override
     }
 
-    Float input_size = size(select_all([igv_tar, depth_tar]), "GB")
+    Float input_size = size(select_all([igv_tar, depth_tar, varfile]), "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
@@ -212,6 +216,7 @@ task concat_plots {
         python3 /src/variant-interpretation/scripts/concat_igv_depth.py \
             --igv-dir igv_pngs \
             --depth-dir depth_pngs \
+            --varfile ~{varfile} \
             --outdir ~{prefix}_igv_depth_plots
 
         tar -czf ~{prefix}_igv_depth_plots.tar.gz ~{prefix}_igv_depth_plots
