@@ -35,6 +35,48 @@ def vstack(top_path, bottom_path, out_path):
     combined.save(out_path)
 
 
+def hstack(paths, out_path):
+    imgs = [Image.open(p).convert("RGB") for p in paths]
+    h = min(im.height for im in imgs)
+    scaled = [im if im.height == h else im.resize((int(im.width * h / im.height), h))
+              for im in imgs]
+    combined = Image.new("RGB", (sum(im.width for im in scaled), h), (255, 255, 255))
+    x = 0
+    for im in scaled:
+        combined.paste(im, (x, 0))
+        x += im.width
+    combined.save(out_path)
+
+
+def collect_igv_plots(igv_dir):
+    """Return {`{stem}.png`: path}, first merging any `{stem}.left.png` + `{stem}.right.png`
+    breakpoint panes (emitted by makeigvpesr.py for large SVs) into one `{stem}.png` so they
+    can pair with the single depth plot of the same name."""
+    plain = {}   # stem -> path
+    sides = {}   # stem -> {"left": path, "right": path}
+    for p in glob.glob(os.path.join(igv_dir, "*.png")):
+        b = os.path.basename(p)
+        if b.endswith(".left.png"):
+            sides.setdefault(b[:-len(".left.png")], {})["left"] = p
+        elif b.endswith(".right.png"):
+            sides.setdefault(b[:-len(".right.png")], {})["right"] = p
+        else:
+            plain[b[:-len(".png")]] = p
+
+    for stem, d in sides.items():
+        if stem in plain:            # a single-pane plot already exists; prefer it
+            continue
+        ordered = [d[k] for k in ("left", "right") if k in d]
+        out = os.path.join(igv_dir, stem + ".png")
+        if len(ordered) == 1:
+            Image.open(ordered[0]).convert("RGB").save(out)
+        else:
+            hstack(ordered, out)     # left | right
+        plain[stem] = out
+
+    return {stem + ".png": path for stem, path in plain.items()}
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -45,7 +87,7 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
-    igv_plots = {os.path.basename(p): p for p in glob.glob(os.path.join(args.igv_dir, "*.png"))}
+    igv_plots = collect_igv_plots(args.igv_dir)
     depth_plots = {os.path.basename(p): p for p in glob.glob(os.path.join(args.depth_dir, "*.png"))}
 
     n_combined = n_igv_only = 0

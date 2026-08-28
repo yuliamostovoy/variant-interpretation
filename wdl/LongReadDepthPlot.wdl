@@ -22,6 +22,8 @@ workflow LongReadDepthPlot {
         File ped_file
         File? fam_ids
         File sample_bam_bai      # sample <tab> bai <tab> bam
+        Array[File] annotation_beds = []      # optional regions to highlight (N-gaps, segdups, ...)
+        Array[String] annotation_names = []   # labels, same order as annotation_beds
         Int? flank
         Int? window
         String sv_base_mini_docker
@@ -63,6 +65,8 @@ workflow LongReadDepthPlot {
                 per_family_bed = generate_per_family_bed.bed_file,
                 ped_file = ped_file,
                 sample_bam_bai = sample_bam_bai,
+                annotation_beds = annotation_beds,
+                annotation_names = annotation_names,
                 flank = flank_,
                 window = window_,
                 prefix = prefix,
@@ -177,6 +181,8 @@ task depth_plot {
         File per_family_bed
         File ped_file
         File sample_bam_bai
+        Array[File] annotation_beds = []
+        Array[String] annotation_names = []
         Int flank
         Int window
         String prefix
@@ -225,7 +231,9 @@ task depth_plot {
             --family ~{family} \
             --flank ~{flank} \
             --depth-dir . \
-            --outdir rd_plots
+            --outdir rd_plots \
+            --annotation-beds ~{sep=" " annotation_beds} \
+            --annotation-names ~{sep=" " annotation_names}
 
         tar -czf rd_plots.tar.gz rd_plots/
     >>>

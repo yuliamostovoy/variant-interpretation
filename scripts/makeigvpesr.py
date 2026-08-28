@@ -28,6 +28,7 @@ parser.add_argument('-bam', '--bamfiscript', type=str, help='name of chromosome 
 parser.add_argument('-m', '--igvmaxwindow', type=str, help='max length of SV to appear in IGV', default=10e10)
 parser.add_argument('--long_read', dest='long_read', action='store_true', help='render for long reads: omit viewaspairs (paired-end display is meaningless for long reads)')
 parser.add_argument('--genome', type=str, help='reference genome fasta to load in IGV (needed for BAM/arbitrary references)', default=None)
+parser.add_argument('--status_labels', dest='status_labels', action='store_true', help='label/order each BAM track by affected+carrier status (long-read); requires the varfile 6th column to hold the per-variant carrier sample list')
 
 args = parser.parse_args()
 
@@ -40,6 +41,28 @@ fam_id = args.fam_id
 igv_max_window = args.igvmaxwindow
 long_read = args.long_read
 genome = args.genome
+status_labels = args.status_labels
+
+
+def status_label(sample, affected, carriers):
+    aff, car = sample in affected, sample in carriers
+    if aff and car:
+        return "AFFECTED_CARRIER"
+    if car:
+        return "CARRIER"
+    if aff:
+        return "AFFECTED"
+    return "unaffected"
+
+
+def status_rank(sample, affected, carriers):
+    aff, car = sample in affected, sample in carriers
+    return 0 if (aff and car) else (1 if car else (2 if aff else 3))
+
+
+def sample_from_bam(path):
+    b = os.path.basename(path)
+    return b[:-4] if b.endswith(".bam") else os.path.splitext(b)[0]
 
 
 outstring=os.path.basename(varfile)[0:-4]
@@ -101,7 +124,9 @@ ped.columns = ['FamilyID', 'IndividualID', 'FatherID', 'MotherID', 'Sex', 'Affec
 ped['FatherID'] = ped['FatherID'].astype(str)
 ped['MotherID'] = ped['MotherID'].astype(str)
 ped.Affected = pd.to_numeric(ped.Affected)
-for sample_id in samples_list:
+affected_samples = set(ped.loc[ped['Affected'] == 2, 'IndividualID'].astype(str))
+# status mode reorders per-variant below; skip the legacy affected-to-top reorder
+for sample_id in (samples_list if not status_labels else []):
 	if(ped.loc[(ped['IndividualID'] == sample_id)]['Affected'].iloc[0] == 2):
 		if((ped.loc[(ped['IndividualID'] == sample_id)]['MotherID'].iloc[0] != '0' )| (ped.loc[(ped['IndividualID'] == sample_id)]['FatherID'].iloc[0] != '0' )):
 			print(sample_id)
@@ -136,7 +161,33 @@ with open(bamfiscript,'w') as h:
 
                 Length_total=int(Length+(Length)*1.5)
 
-                for cram in cram_list:
+                # long-read reads are noisy at the per-read indel level: hide sub-5bp
+                # indels for larger variants, but show them when the variant itself is small
+                if long_read:
+                    if Length > 50:
+                        g.write('preference SAM.HIDE_SMALL_INDEL true\n')
+                        g.write('preference SAM.SMALL_INDEL_BP_THRESHOLD 5\n')
+                    else:
+                        g.write('preference SAM.HIDE_SMALL_INDEL false\n')
+
+                if status_labels:
+                    carriers = set(dat[5].split(',')) if len(dat) > 5 and dat[5] else set()
+                    ordered = sorted(cram_list,
+                                     key=lambda c: (status_rank(sample_from_bam(c), affected_samples, carriers),
+                                                    cram_list.index(c)))
+                    for c in ordered:
+                        s = sample_from_bam(c)
+                        link = status_label(s, affected_samples, carriers) + "." + s + ".bam"
+                        if not os.path.lexists(link):
+                            os.symlink(os.path.abspath(c), link)
+                        for idx in (c + ".bai", (c[:-4] if c.endswith(".bam") else c) + ".bai"):
+                            if os.path.exists(idx):
+                                if not os.path.lexists(link + ".bai"):
+                                    os.symlink(os.path.abspath(idx), link + ".bai")
+                                break
+                        g.write('load ' + link + '\n')
+                else:
+                    for cram in cram_list:
                         g.write('load '+cram+'\n')
 
                 if Length_total<int(igv_max_window):

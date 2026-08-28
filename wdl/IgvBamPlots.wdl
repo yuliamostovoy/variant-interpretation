@@ -218,11 +218,11 @@ task runIGV_whole_genome_parse{
             #subset bam files to the plotted regions (cheaper than localizing whole long-read BAMs)
             while read sample bai bam new_bam new_bai
             do
-                name=$( echo $new_bam|awk -F"/" '{print $NF}'|sed 's/.bam//g' )
                 gsutil cp $bai $( basename $bam | sed 's/\.bam$/.bai/g' )
                 export GCS_OAUTH_TOKEN=`gcloud auth application-default print-access-token`
-                samtools view -h -b -o $name.bam $bam -L regions.bed.gz -M
-                samtools index $name.bam
+                # name the subset by sample id so makeigvpesr can map track -> sample reliably
+                samtools view -h -b -o $sample.bam $bam -L regions.bed.gz -M
+                samtools index $sample.bam
             done<~{updated_sample_bam_bai}
             ls *.bam > bams.txt
 
@@ -231,7 +231,7 @@ task runIGV_whole_genome_parse{
             do
                 let "i=$i+1"
                 echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read}
+                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} --status_labels
                 bash pe.$i.sh
                 xvfb-run --server-args="-screen 0, 1920x540x24" bash /IGV_Linux_2.16.0/igv.sh -b pe.$i.txt
             done < ~{varfile}

@@ -57,6 +57,29 @@ def sample_from_filename(path):
     return base.split(".regions.bed.gz")[0]
 
 
+# colorblind-safe (Okabe-Ito) palette for annotation tracks
+ANNOTATION_PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#D55E00",
+                      "#CC79A7", "#0072B2", "#F0E442", "#999999"]
+
+
+def load_bed_intervals(path):
+    """Load a (optionally gzipped) BED -> {chrom: [(start, end), ...]}."""
+    by_chrom = {}
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt") as fh:
+        for line in fh:
+            if not line.strip() or line.startswith(("#", "track", "browser")):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 3:
+                continue
+            try:
+                by_chrom.setdefault(f[0], []).append((int(f[1]), int(f[2])))
+            except ValueError:
+                continue
+    return by_chrom
+
+
 def norm_factor(windows, chrom, cnv_start, cnv_end):
     """Median depth over flank windows (outside the called interval) on this chrom."""
     flank = [d for (c, s, e, d) in windows
@@ -78,10 +101,22 @@ def main():
     ap.add_argument("--depth-dir", default=".",
                     help="directory containing {sample}.regions.bed.gz files")
     ap.add_argument("--outdir", default="rd_plots")
+    ap.add_argument("--annotation-beds", nargs="*", default=[],
+                    help="optional BED files of regions to highlight (e.g. N-gaps, segdups)")
+    ap.add_argument("--annotation-names", nargs="*", default=[],
+                    help="labels for --annotation-beds, in the same order")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
     ped = read_ped(args.ped)
+    affected = {s for s, info in ped.items() if str(info.get("affected")) == "2"}
+
+    annotations = []
+    for i, bed_path in enumerate(args.annotation_beds):
+        name = args.annotation_names[i] if i < len(args.annotation_names) else os.path.basename(bed_path)
+        annotations.append({"name": name,
+                            "color": ANNOTATION_PALETTE[i % len(ANNOTATION_PALETTE)],
+                            "by_chrom": load_bed_intervals(bed_path)})
 
     depth = {}
     for path in glob.glob(os.path.join(args.depth_dir, "*.regions.bed.gz")):
@@ -115,19 +150,32 @@ def main():
                 pts = sorted(zip(xs, ys))
                 xs, ys = [p[0] for p in pts], [p[1] for p in pts]
                 is_carrier = sample in carriers
+                tags = (["carrier"] if is_carrier else []) + (["affected"] if sample in affected else [])
+                label = sample + (" (" + ", ".join(tags) + ")" if tags else "")
                 ax.plot(xs, ys,
                         color="crimson" if is_carrier else "0.7",
                         lw=2.0 if is_carrier else 1.0,
                         zorder=3 if is_carrier else 1,
-                        label=f"{sample} (carrier)" if is_carrier else sample)
+                        label=label)
 
-            ax.axvspan(start, end, color="lightblue", alpha=0.3, zorder=0)
+            ax.axvspan(start, end, color="0.6", alpha=0.35, zorder=0)
+
+            # shade any annotation intervals overlapping the visible window
+            for track in annotations:
+                first = True
+                for (s, e) in track["by_chrom"].get(chrom, []):
+                    if e > lo and s < hi:
+                        ax.axvspan(max(s, lo), min(e, hi), color=track["color"],
+                                   alpha=0.18, zorder=0,
+                                   label=track["name"] if first else "_nolegend_")
+                        first = False
+
             ax.axhline(1.0, color="black", ls="--", lw=0.8, zorder=2)
             ax.axhline(0.5 if svtype == "DEL" else 1.5, color="green", ls=":", lw=0.8, zorder=2)
             ax.set_ylim(0, 3)
             ax.set_xlabel(f"{chrom} position")
             ax.set_ylabel("normalized depth")
-            ax.set_title(f"{vid}  {svtype}  {chrom}:{start}-{end}")
+            ax.set_title(f"{vid}  {end - start:,} bp  {svtype}  {chrom}:{start}-{end}")
             ax.legend(fontsize=6, ncol=2, loc="upper right")
             fig.tight_layout()
             fig.savefig(os.path.join(args.outdir, f"{args.family}_{vid}.png"), dpi=120)

@@ -42,6 +42,10 @@ workflow VisualizePlotsLongRead {
         String? buffer
         Int? depth_flank
         Int? depth_window
+        # optional reference BEDs to highlight on the depth plots (e.g. N-gaps, segdups),
+        # with matching labels in the same order
+        Array[File] annotation_beds = []
+        Array[String] annotation_names = []
 
         String sv_base_mini_docker = "us.gcr.io/broad-dsde-methods/gatk-sv/sv-base-mini:2024-10-25-v0.29-beta-5ea22a52"
         String long_read_visualize_docker = "quay.io/ymostovoy/lr-visualize:latest"
@@ -112,6 +116,8 @@ workflow VisualizePlotsLongRead {
                 ped_file = pedfile,
                 fam_ids = fam_ids,
                 sample_bam_bai = sample_bam_bai,
+                annotation_beds = annotation_beds,
+                annotation_names = annotation_names,
                 flank = depth_flank,
                 window = depth_window,
                 sv_base_mini_docker = sv_base_mini_docker,
