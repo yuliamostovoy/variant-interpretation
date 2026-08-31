@@ -250,11 +250,21 @@ task runIGV_whole_genome_parse{
             cat ~{varfile} | cut -f1-3 | awk '{if (($3-$2)+int(($3-$2)*1.5)>=~{igv_max_window}) print $1"\t"$2-~{buffer}"\t"$2+~{buffer} "\n" $1"\t"$3-~{buffer}"\t"$3+~{buffer};
                 else print $1"\t"($2-int(($3-$2)*0.25))-~{buffer}"\t"$3+int(($3-$2)*0.25)+~{buffer}}' | sort -k1,1 -k2,2n | bgzip -c > regions.bed.gz
             tabix -p bed regions.bed.gz
+            # OAuth token from the GCE metadata server (no gcloud SDK needed); htslib
+            # reads gs:// BAMs via libcurl using GCS_OAUTH_TOKEN
+            export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+                | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+            # gs://bucket/obj -> local file, via the GCS XML API with a bearer token
+            gcs_cp () {
+                p="${1#gs://}"
+                curl -sf -H "Authorization: Bearer $GCS_OAUTH_TOKEN" \
+                    -o "$2" "https://storage.googleapis.com/${p}"
+            }
             # subset each remote BAM to the plotted regions
             while read sample bai bam new_bam new_bai
             do
-                gsutil cp $bai $( basename $bam | sed 's/\.bam$/.bai/g' )
-                export GCS_OAUTH_TOKEN=`gcloud auth application-default print-access-token`
+                gcs_cp "$bai" "$( basename $bam | sed 's/\.bam$/.bai/g' )"
                 # name the subset by sample id so makeigvpesr maps each track to its sample
                 samtools view -h -b -o $sample.bam $bam -L regions.bed.gz -M
                 samtools index $sample.bam

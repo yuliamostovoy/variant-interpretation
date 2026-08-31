@@ -216,9 +216,19 @@ task depth_plot {
             | sort -k1,1 -k2,2n | bedtools merge -i - > regions.bed
         bedtools makewindows -b regions.bed -w ~{window} > windows.bed
 
+        # OAuth token from the GCE metadata server (no gcloud SDK needed); htslib
+        # reads gs:// BAMs via libcurl using GCS_OAUTH_TOKEN
+        export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+        # gs://bucket/obj -> local file, via the GCS XML API with a bearer token
+        gcs_cp () {
+            p="${1#gs://}"
+            curl -sf -H "Authorization: Bearer $GCS_OAUTH_TOKEN" \
+                -o "$2" "https://storage.googleapis.com/${p}"
+        }
         while read sample bai bam; do
-            gsutil cp $bai $( basename $bam ).bai || true
-            export GCS_OAUTH_TOKEN=`gcloud auth application-default print-access-token`
+            gcs_cp "$bai" "$( basename $bam ).bai" || true
             samtools view -b -o $sample.bam $bam -L regions.bed -M
             samtools index $sample.bam
             mosdepth --no-per-base --by windows.bed $sample $sample.bam
