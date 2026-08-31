@@ -132,12 +132,12 @@ task runIGV_whole_genome_localize{
             RuntimeAttr? runtime_attr_override
         }
 
-    Float input_size = size(select_all([varfile, ped_file, bams, bais]), "GB")
+    Float input_size = size(select_all([varfile, ped_file, reference, reference_index, gene_track, gene_track_index]), "GB") + size(bams, "GB") + size(bais, "GB") + size(annotation_beds, "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
                                       mem_gb: base_mem_gb,
-                                      disk_gb: ceil(10 + input_size),
+                                      disk_gb: ceil(20 + input_size * 2),
                                       cpu: 1,
                                       preemptible: 2,
                                       max_retries: 1,
@@ -167,7 +167,11 @@ task runIGV_whole_genome_localize{
             GENE_TBI="~{default='' gene_track_index}"
             if [ -n "$GENE_TRACK" ]; then
                 if [ -n "$GENE_TBI" ]; then
-                    ln -sf "$GENE_TBI" "$GENE_TRACK.tbi"
+                    # place the index beside the gzip unless it's already there (Cromwell may
+                    # localize both to the same dir, where $GENE_TRACK.tbi == $GENE_TBI)
+                    if [ "$GENE_TBI" != "$GENE_TRACK.tbi" ]; then
+                        ln -sf "$GENE_TBI" "$GENE_TRACK.tbi"
+                    fi
                     GENES_ARG="--genes $GENE_TRACK"
                 else
                     low=$( echo "$GENE_TRACK" | tr '[:upper:]' '[:lower:]' )
@@ -236,12 +240,12 @@ task runIGV_whole_genome_parse{
         RuntimeAttr? runtime_attr_override
     }
 
-    Float input_size = size(select_all([varfile, ped_file]), "GB")
+    Float input_size = size(select_all([varfile, ped_file, reference, reference_index, gene_track, gene_track_index]), "GB") + size(annotation_beds, "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
                                       mem_gb: base_mem_gb,
-                                      disk_gb: ceil(10 + input_size),
+                                      disk_gb: ceil(20 + input_size * 2),
                                       cpu: 1,
                                       preemptible: 2,
                                       max_retries: 1,
@@ -274,7 +278,11 @@ task runIGV_whole_genome_parse{
             GENE_TBI="~{default='' gene_track_index}"
             if [ -n "$GENE_TRACK" ]; then
                 if [ -n "$GENE_TBI" ]; then
-                    ln -sf "$GENE_TBI" "$GENE_TRACK.tbi"
+                    # place the index beside the gzip unless it's already there (Cromwell may
+                    # localize both to the same dir, where $GENE_TRACK.tbi == $GENE_TBI)
+                    if [ "$GENE_TBI" != "$GENE_TRACK.tbi" ]; then
+                        ln -sf "$GENE_TBI" "$GENE_TRACK.tbi"
+                    fi
                     GENES_ARG="--genes $GENE_TRACK"
                 else
                     low=$( echo "$GENE_TRACK" | tr '[:upper:]' '[:lower:]' )
