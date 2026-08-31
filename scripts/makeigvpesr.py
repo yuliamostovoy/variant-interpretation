@@ -148,6 +148,8 @@ with open(bamfiscript,'w') as h:
         g.write('new\n')
         if genome:
             g.write('genome ' + genome + '\n')
+        # keep annotation/gene feature tracks at a standard (collapsed) height
+        g.write('preference EXPAND_FEATURE_TRACKS false\n')
         with open(varfile,'r') as f:
             for line in f:
                 dat=line.rstrip().split("\t")
@@ -216,32 +218,30 @@ with open(bamfiscript,'w') as h:
                     else:
                         Start_Buff = int(Start - (Length * 0.25))
                         End_Buff = int(End + (Length * 0.25))
+                    g.write('preference SAM.SHOW_CENTER_LINE false\n')
                     g.write('goto '+Chr+":"+str(Start_Buff)+'-'+str(End_Buff)+'\n')
                     g.write('region '+Chr+":"+str(Start)+'-'+str(End)+'\n')
-                    g.write('sort base\n')
+                    if Length<=50:
+                        g.write('sort base\n')
                     if not long_read:
                         g.write('viewaspairs\n')
                     g.write('squish\n')
-                    g.write('collapse Refseq Genes\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.png\n' )
                 else:
+                    # split view: one snapshot per breakpoint, each centered on the junction
+                    # with a single center line (not a double-edged region-of-interest marker)
+                    g.write('preference SAM.SHOW_CENTER_LINE true\n')
                     g.write('goto '+Chr+":"+str(Start-buff)+'-'+str(Start+buff)+'\n')
-                    g.write('region '+Chr+":"+str(Start)+'-'+str(Start)+'\n')
-                    g.write('sort base\n')
                     if not long_read:
                         g.write('viewaspairs\n')
                     g.write('squish\n')
-                    g.write('collapse Refseq Genes\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.left.png\n' )
                     g.write('goto '+Chr+":"+str(End-buff)+'-'+str(End+buff)+'\n')
-                    g.write('region '+Chr+":"+str(End)+'-'+str(End)+'\n')
-                    g.write('sort base\n')
                     if not long_read:
                         g.write('viewaspairs\n')
                     g.write('squish\n')
-                    g.write('collapse Refseq Genes\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.right.png\n' )
                 # g.write('goto '+Chr+":"+Start+'-'+End+'\n')

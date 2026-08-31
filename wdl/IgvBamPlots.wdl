@@ -21,8 +21,7 @@ workflow IGV {
         Boolean long_read
         Array[File]? bams_localize
         Array[File]? bais_localize
-        File reference
-        File reference_index
+        String igv_genome
         Int igv_max_window
         String buffer
         String igv_docker
@@ -66,8 +65,7 @@ workflow IGV {
                 bais = select_first([LocalizeReadsLocalize.output_index, bais_localize_]),
                 sample_bam_bai = sample_bam_bai_,
                 buffer = buffer,
-                reference = reference,
-                reference_index = reference_index,
+                igv_genome = igv_genome,
                 igv_max_window = igv_max_window,
                 long_read = long_read,
                 annotation_beds = annotation_beds,
@@ -92,8 +90,7 @@ workflow IGV {
                 samples = samples,
                 updated_sample_bam_bai = updated_sample_bam_bai_,
                 buffer = buffer,
-                reference = reference,
-                reference_index = reference_index,
+                igv_genome = igv_genome,
                 igv_max_window = igv_max_window,
                 long_read = long_read,
                 annotation_beds = annotation_beds,
@@ -113,8 +110,7 @@ workflow IGV {
 task runIGV_whole_genome_localize{
         input{
             File varfile
-            File reference
-            File reference_index
+            String igv_genome
             Int igv_max_window
             String family
             File ped_file
@@ -132,7 +128,7 @@ task runIGV_whole_genome_localize{
             RuntimeAttr? runtime_attr_override
         }
 
-    Float input_size = size(select_all([varfile, ped_file, reference, reference_index, gene_track, gene_track_index]), "GB") + size(bams, "GB") + size(bais, "GB") + size(annotation_beds, "GB")
+    Float input_size = size(select_all([varfile, ped_file, gene_track, gene_track_index]), "GB") + size(bams, "GB") + size(bais, "GB") + size(annotation_beds, "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
@@ -190,15 +186,10 @@ task runIGV_whole_genome_localize{
                 fi
             fi
 
-            i=0
-            while read -r line
-            do
-                let "i=$i+1"
-                echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
-                bash pe.$i.sh
-                xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{reference} -b pe.$i.txt
-            done < ~{varfile}
+            # one IGV batch (and one JVM) for all of this family's variants
+            python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
+            bash pe.all.sh
+            xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{igv_genome} -b pe.all.txt
             tar -czf ~{family}_pe_igv_plots.tar.gz pe_igv_plots
 
         >>>
@@ -223,8 +214,7 @@ task runIGV_whole_genome_localize{
 task runIGV_whole_genome_parse{
     input{
         File varfile
-        File reference
-        File reference_index
+        String igv_genome
         Int igv_max_window
         String family
         File ped_file
@@ -240,7 +230,7 @@ task runIGV_whole_genome_parse{
         RuntimeAttr? runtime_attr_override
     }
 
-    Float input_size = size(select_all([varfile, ped_file, reference, reference_index, gene_track, gene_track_index]), "GB") + size(annotation_beds, "GB")
+    Float input_size = size(select_all([varfile, ped_file, gene_track, gene_track_index]), "GB") + size(annotation_beds, "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
@@ -301,15 +291,10 @@ task runIGV_whole_genome_parse{
                 fi
             fi
 
-            i=0
-            while read -r line
-            do
-                let "i=$i+1"
-                echo "$line" > new.varfile.$i.bed
-                python /src/variant-interpretation/scripts/makeigvpesr.py -v new.varfile.$i.bed -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.$i.txt -bam pe.$i.sh -m ~{igv_max_window} --genome ~{reference} ~{true="--long_read" false="" long_read} --status_labels $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
-                bash pe.$i.sh
-                xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{reference} -b pe.$i.txt
-            done < ~{varfile}
+            # one IGV batch (and one JVM) for all of this family's variants
+            python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} --status_labels $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
+            bash pe.all.sh
+            xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{igv_genome} -b pe.all.txt
             tar -czf ~{family}_pe_igv_plots.tar.gz pe_igv_plots
 
         >>>

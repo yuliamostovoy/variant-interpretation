@@ -22,8 +22,7 @@ workflow VisualizePlotsLongRead {
         Array[String] sample_ids
         Array[String] bams
         Array[String] bais
-        File reference
-        File reference_index
+        String igv_genome = "hg38"
         String prefix
         File? fam_ids
 
@@ -90,8 +89,7 @@ workflow VisualizePlotsLongRead {
                 fam_ids = fam_ids,
                 sample_bam_bai = sample_bam_bai,
                 varfile = reformat_variants.varfile,
-                reference = reference,
-                reference_index = reference_index,
+                igv_genome = igv_genome,
                 igv_max_window = igv_max_window_,
                 file_localization = file_localization,
                 requester_pays = requester_pays,

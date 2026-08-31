@@ -16,8 +16,7 @@ workflow IGV_all_samples {
         File? fam_ids
         File sample_bam_bai
         File varfile
-        File reference
-        File reference_index
+        String igv_genome
         Int igv_max_window
         Boolean file_localization
         Boolean requester_pays
@@ -101,8 +100,7 @@ workflow IGV_all_samples {
                     bais_localize = generate_per_family_sample_bam_bai.per_family_bais_files,
                     sample_bam_bai = generate_per_family_sample_bam_bai.subset_sample_bam_bai,
                     buffer = buffer,
-                    reference = reference,
-                    reference_index = reference_index,
+                    igv_genome = igv_genome,
                     igv_docker = igv_docker,
                     variant_interpretation_docker = variant_interpretation_docker,
                     runtime_attr_igv = runtime_attr_igv
@@ -128,8 +126,7 @@ workflow IGV_all_samples {
                     samples = update_sample_bam_bai.per_family_samples,
                     updated_sample_bam_bai = update_sample_bam_bai.changed_sample_bam_bai,
                     buffer = buffer,
-                    reference = reference,
-                    reference_index = reference_index,
+                    igv_genome = igv_genome,
                     igv_docker = igv_docker,
                     variant_interpretation_docker = variant_interpretation_docker,
                     runtime_attr_igv = runtime_attr_igv

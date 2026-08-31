@@ -54,6 +54,9 @@ RUN curl -sSL -o /tmp/igv.zip \
     && unzip -q /tmp/igv.zip -d / \
     && rm /tmp/igv.zip
 
+# Default IGV genome to hg38 so `new`/startup never loads the built-in hg19 default
+RUN mkdir -p /root/igv && printf 'DEFAULT_GENOME_KEY=hg38\n' > /root/igv/prefs.properties
+
 # Python deps: plotting (matplotlib + Pillow) and dataframes (pandas for renameCrams.py /
 # makeigvpesr.py, which also uses numpy)
 RUN pip3 install --no-cache-dir --break-system-packages \
