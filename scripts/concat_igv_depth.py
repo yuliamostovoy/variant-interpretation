@@ -109,16 +109,28 @@ def load_variant_info(varfile):
     return info
 
 
-def header_text_for(stem, info):
-    """Match `{family}_{ID}` stem to a variant ID (longest ID that is the stem or a
-    `_ID` suffix of it) and format the header, or None if unmatched."""
-    vid = None
+def variant_id_for(stem, info):
+    """The variant ID embedded in a `{family}_{ID}` stem: the stem itself if it is an ID,
+    else the longest known ID that is a trailing `_ID` of it. None if unmatched."""
     if stem in info:
-        vid = stem
-    else:
-        cands = [i for i in info if stem.endswith("_" + i)]
-        if cands:
-            vid = max(cands, key=len)
+        return stem
+    cands = [i for i in info if stem.endswith("_" + i)]
+    return max(cands, key=len) if cands else None
+
+
+def reordered_name(stem, info):
+    """`{family}_{ID}` -> `{ID}_{family}.png` so combined outputs sort by variant ID.
+    Falls back to the original stem if the ID can't be identified."""
+    vid = variant_id_for(stem, info)
+    if not vid or stem == vid:
+        return stem + ".png"
+    fam = stem[:-(len(vid) + 1)]        # strip trailing "_<vid>"
+    return f"{vid}_{fam}.png" if fam else stem + ".png"
+
+
+def header_text_for(stem, info):
+    """Format the SV-info header for a stem, or None if its variant ID is unmatched."""
+    vid = variant_id_for(stem, info)
     if vid is None:
         return None
     chrom, start, end, svtype = info[vid]
@@ -152,7 +164,7 @@ def main():
     n_combined = n_igv_only = 0
     for name, igv_path in sorted(igv_plots.items()):
         stem = name[:-len(".png")]
-        out_path = os.path.join(args.outdir, name)
+        out_path = os.path.join(args.outdir, reordered_name(stem, info))
         igv_img = trim_bottom_bg(Image.open(igv_path).convert("RGB"))
         if name in depth_plots:
             body = vstack_imgs(igv_img, Image.open(depth_plots[name]).convert("RGB"))
@@ -165,8 +177,9 @@ def main():
     # depth plots with no matching IGV plot (shouldn't happen, but don't drop them silently)
     for name, depth_path in sorted(depth_plots.items()):
         if name not in igv_plots:
-            finalize(Image.open(depth_path).convert("RGB"), name[:-len(".png")], info,
-                     os.path.join(args.outdir, name))
+            stem = name[:-len(".png")]
+            finalize(Image.open(depth_path).convert("RGB"), stem, info,
+                     os.path.join(args.outdir, reordered_name(stem, info)))
             sys.stderr.write(f"WARNING: depth plot {name} had no matching IGV plot\n")
 
     sys.stderr.write(f"Combined {n_combined}, IGV-only {n_igv_only}, written to {args.outdir}\n")

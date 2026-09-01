@@ -109,8 +109,12 @@ task generate_families{
 
     command <<<
         set -euo pipefail
-        cat ~{bed} | gunzip | tail -n+2 | cut -f 1-6 | grep 'DEL\|DUP' | cut -f6 | tr ',' '\n' | sort -u > samples.txt
-        grep -w -f samples.txt ~{ped_file} | cut -f1 | sort -u > families.txt
+        # col6 is the comma-separated carrier list; drop the missing-value '.' and blanks.
+        # A bare '.' left in the pattern file is a regex/word wildcard under grep and would
+        # match every ped row, selecting the entire cohort.
+        cat ~{bed} | gunzip | tail -n+2 | cut -f 1-6 | grep 'DEL\|DUP' | cut -f6 | tr ',' '\n' | sort -u | awk '$0 != "." && $0 != ""' > samples.txt
+        # -F: carrier IDs contain '.' — match them literally, not as regex; -w: whole word
+        grep -F -w -f samples.txt ~{ped_file} | cut -f1 | sort -u > families.txt
         >>>
 
     output{
@@ -155,7 +159,7 @@ task generate_per_family_bed {
         set -euo pipefail
         cat ~{ped_file} | grep -w ~{family} | cut -f2 | sort -u > samples_in_family.txt
         # keep DEL/DUP rows carried by a member of this family; preserve all 6 columns
-        cat ~{bed} | gunzip | tail -n+2 | cut -f1-6 | grep 'DEL\|DUP' | grep -w -f samples_in_family.txt > per_family_bed.bed || true
+        cat ~{bed} | gunzip | tail -n+2 | cut -f1-6 | grep 'DEL\|DUP' | grep -F -w -f samples_in_family.txt > per_family_bed.bed || true
         >>>
 
     output {

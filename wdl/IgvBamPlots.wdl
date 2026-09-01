@@ -231,7 +231,10 @@ task runIGV_whole_genome_parse{
     }
 
     Float input_size = size(select_all([varfile, ped_file, gene_track, gene_track_index]), "GB") + size(annotation_beds, "GB")
-    Float base_mem_gb = 3.75
+    # igv.sh launches the JVM with -Xmx8g, so the VM must exceed 8 GiB or the kernel
+    # OOM-kills IGV (exit 137) on deep/multi-member long-read pileups. Override per-run
+    # via runtime_attr_igv for exceptionally large families.
+    Float base_mem_gb = 12.0
 
     RuntimeAttr default_attr = object {
                                       mem_gb: base_mem_gb,

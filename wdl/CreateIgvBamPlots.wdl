@@ -171,8 +171,12 @@ task generate_families{
 
     command <<<
         set -euo pipefail
-        cat ~{varfile} | gunzip | tail -n+2 | cut -f6 | tr ',' '\n' | sort -u > samples.txt #must have header line
-        grep -w -f samples.txt ~{ped_file} | cut -f1 | sort -u  > families.txt
+        # col6 is the comma-separated carrier list; drop the missing-value '.' and blanks.
+        # A bare '.' left in the pattern file is a regex/word wildcard under grep and would
+        # match every ped row, selecting the entire cohort.
+        cat ~{varfile} | gunzip | tail -n+2 | cut -f6 | tr ',' '\n' | sort -u | awk '$0 != "." && $0 != ""' > samples.txt #must have header line
+        # -F: carrier IDs contain '.' — match them literally, not as regex; -w: whole word
+        grep -F -w -f samples.txt ~{ped_file} | cut -f1 | sort -u > families.txt
         >>>
 
     output{
@@ -325,7 +329,8 @@ task generate_per_family_bed{
     command <<<
         set -euo pipefail
         cat ~{varfile} | gunzip | cut -f1-6 > updated_varfile.bed
-        grep -f ~{write_lines(samples)} updated_varfile.bed | cut -f1-6 | awk '{print $1,$2,$3,$4,$5,$6}' | sed -e 's/ /\t/g' > ~{filename}.~{family}.bed
+        # -F -w: match the (dot-containing) sample IDs literally and whole-word, not as regex
+        grep -F -w -f ~{write_lines(samples)} updated_varfile.bed | cut -f1-6 | awk '{print $1,$2,$3,$4,$5,$6}' | sed -e 's/ /\t/g' > ~{filename}.~{family}.bed
         >>>
 
     output{
