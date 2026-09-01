@@ -17,6 +17,7 @@ import gzip
 import os
 import sys
 
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 HEADER_H = 60
@@ -31,6 +32,33 @@ def _load_font(size=28):
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
     return ImageFont.load_default()
+
+
+def trim_bottom_bg(img, pad=6, white=240, line_frac=0.6):
+    """Crop the empty region IGV leaves below the last track. IGV panels sit on a near-white
+    background (~250) with a slightly different-shaded left name gutter; the empty area below
+    the last track holds only thin vertical dividers/markers (the gutter border, region and
+    center lines) that run its full height. So: treat any near-white pixel as background,
+    drop columns that are non-background for >= `line_frac` of the HEIGHT (those vertical
+    lines), then crop just below the lowest remaining real-content row (reads, coverage,
+    gene models, a track label, or a track's horizontal separator).
+
+    Height/track-count agnostic: more family members add read tracks higher up but the empty
+    tail is detected the same way, and the reliable vertical line (the gutter border, which
+    spans H minus the ~130px ruler) only becomes a LARGER height fraction as H grows.
+    Dropping a thin column never empties a horizontally-spanning content row, so this can
+    under-trim (harmless) but won't clip real tracks. Width and top are untouched."""
+    arr = np.asarray(img.convert("RGB"))
+    H, W, _ = arr.shape
+    nonbg = arr.min(axis=2) < white
+    col_is_line = nonbg.sum(axis=0) >= line_frac * H     # thin full-height dividers/markers
+    content = nonbg.copy()
+    content[:, col_is_line] = False
+    nz = np.nonzero(np.any(content, axis=1))[0]
+    if nz.size == 0:
+        return img
+    last = min(H, int(nz[-1]) + 1 + pad)
+    return img if last >= H else img.crop((0, 0, W, last))
 
 
 def vstack_imgs(top, bottom):
@@ -125,12 +153,12 @@ def main():
     for name, igv_path in sorted(igv_plots.items()):
         stem = name[:-len(".png")]
         out_path = os.path.join(args.outdir, name)
+        igv_img = trim_bottom_bg(Image.open(igv_path).convert("RGB"))
         if name in depth_plots:
-            body = vstack_imgs(Image.open(igv_path).convert("RGB"),
-                               Image.open(depth_plots[name]).convert("RGB"))
+            body = vstack_imgs(igv_img, Image.open(depth_plots[name]).convert("RGB"))
             n_combined += 1
         else:
-            body = Image.open(igv_path).convert("RGB")
+            body = igv_img
             n_igv_only += 1
         finalize(body, stem, info, out_path)
 

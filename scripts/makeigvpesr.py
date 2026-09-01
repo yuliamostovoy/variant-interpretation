@@ -176,6 +176,9 @@ with open(bamfiscript,'w') as h:
                         g.write('preference SAM.HIDE_SMALL_INDEL false\n')
                         g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 1\n')
 
+                # track the loaded read files so we can re-squish just their
+                # alignment tracks after a blanket collapse (see snapshot block)
+                loaded_bams = []
                 if status_labels:
                     carriers = set(dat[5].split(',')) if len(dat) > 5 and dat[5] else set()
                     ordered = sorted(cram_list,
@@ -192,9 +195,11 @@ with open(bamfiscript,'w') as h:
                                     os.symlink(os.path.abspath(idx), link + ".bai")
                                 break
                         g.write('load ' + link + '\n')
+                        loaded_bams.append(link)
                 else:
                     for cram in cram_list:
                         g.write('load '+cram+'\n')
+                        loaded_bams.append(os.path.basename(cram))
 
                 # reference annotation tracks (segdups, N-gaps, ...) so IGV-only variants
                 # still show them; symlink to the given name for a clean track label
@@ -225,7 +230,9 @@ with open(bamfiscript,'w') as h:
                         g.write('sort base\n')
                     if not long_read:
                         g.write('viewaspairs\n')
-                    g.write('squish\n')
+                    g.write('collapse\n')
+                    for _bam in loaded_bams:
+                        g.write('squish ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.png\n' )
                 else:
@@ -235,13 +242,17 @@ with open(bamfiscript,'w') as h:
                     g.write('goto '+Chr+":"+str(Start-buff)+'-'+str(Start+buff)+'\n')
                     if not long_read:
                         g.write('viewaspairs\n')
-                    g.write('squish\n')
+                    g.write('collapse\n')
+                    for _bam in loaded_bams:
+                        g.write('squish ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.left.png\n' )
                     g.write('goto '+Chr+":"+str(End-buff)+'-'+str(End+buff)+'\n')
                     if not long_read:
                         g.write('viewaspairs\n')
-                    g.write('squish\n')
+                    g.write('collapse\n')
+                    for _bam in loaded_bams:
+                        g.write('squish ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.right.png\n' )
                 # g.write('goto '+Chr+":"+Start+'-'+End+'\n')

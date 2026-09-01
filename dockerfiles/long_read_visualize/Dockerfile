@@ -67,10 +67,16 @@ RUN pip3 install --no-cache-dir \
 
 # Repo scripts at the conventional path. Pin a commit so bumping VI_COMMIT busts this
 # layer's cache — a plain clone of main is cached by command string and would rebuild stale.
-ARG VI_COMMIT=ab808a4e86e149180ebc6f6a3928cad3a36f988a
+ARG VI_COMMIT=1b3305b2a0c6e7ce022149f32d9cd73113dca91e
 RUN git clone https://github.com/yuliamostovoy/variant-interpretation.git \
         /src/variant-interpretation \
     && git -C /src/variant-interpretation checkout ${VI_COMMIT}
+
+# Debian/Ubuntu ships the htslib URL plugins (hfile_gcs, hfile_libcurl, ...) in the
+# multiarch dir, but the packaged libhts's compiled-in plugin path points at /usr/local.
+# Point HTS_PATH at the real location so samtools can stream gs:// BAMs (otherwise every
+# remote open fails with "Protocol not supported").
+ENV HTS_PATH=/usr/lib/x86_64-linux-gnu/htslib
 
 ENV MPLBACKEND=Agg
 
