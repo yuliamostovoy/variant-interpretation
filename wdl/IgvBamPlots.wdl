@@ -291,10 +291,16 @@ task runIGV_whole_genome_parse{
             export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
                 "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
                 | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+            # Bill a project for requester-pays buckets: htslib sends it as X-Goog-User-Project,
+            # and we add the same header to gcs_cp. Use this VM's compute project; ignored for
+            # non-requester-pays buckets.
+            export GCS_REQUESTER_PAYS_PROJECT=$(curl -s -H "Metadata-Flavor: Google" \
+                "http://metadata.google.internal/computeMetadata/v1/project/project-id")
             # gs://bucket/obj -> local file, via the GCS XML API with a bearer token
             gcs_cp () {
                 p="${1#gs://}"
                 curl -sf -H "Authorization: Bearer $GCS_OAUTH_TOKEN" \
+                    -H "X-Goog-User-Project: $GCS_REQUESTER_PAYS_PROJECT" \
                     -o "$2" "https://storage.googleapis.com/${p}"
             }
             # subset each remote BAM to the plotted regions
