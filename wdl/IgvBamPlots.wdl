@@ -129,10 +129,19 @@ task runIGV_whole_genome_localize{
         }
 
     Float input_size = size(select_all([varfile, ped_file, gene_track, gene_track_index]), "GB") + size(bams, "GB") + size(bais, "GB") + size(annotation_beds, "GB")
-    Float base_mem_gb = 3.75
+    # Peak IGV RAM is driven by how many BAM tracks are held at once (load-once) and the
+    # capped read depth, NOT the variant count (variants render sequentially). Scale the
+    # heap by sample count, with a hard ceiling so a large family can't run up cloud cost.
+    # The JVM's -Xmx is set at runtime from the VM's actual RAM (see command block).
+    Int n_samples = length(samples)
+    Float base_mem_gb = 6.0
+    Float mem_per_sample_gb = 2.0
+    Float mem_ceiling_gb = 20.0
+    Float mem_uncapped_gb = base_mem_gb + mem_per_sample_gb * n_samples
+    Float dynamic_mem_gb = if mem_uncapped_gb < mem_ceiling_gb then mem_uncapped_gb else mem_ceiling_gb
 
     RuntimeAttr default_attr = object {
-                                      mem_gb: base_mem_gb,
+                                      mem_gb: dynamic_mem_gb,
                                       disk_gb: ceil(20 + input_size * 2),
                                       cpu: 1,
                                       preemptible: 2,
@@ -189,7 +198,25 @@ task runIGV_whole_genome_localize{
             # one IGV batch (and one JVM) for all of this family's variants
             python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
             bash pe.all.sh
-            xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{igv_genome} -b pe.all.txt
+
+            # Size the IGV JVM heap to this VM's actual RAM (mem_gb is set per-family in the
+            # runtime block). Leave ~20% headroom for xvfb/OS/samtools.
+            MEM_KB=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+            XMX_MB=$(( MEM_KB * 80 / 100 / 1024 ))
+            sed -i -E "s/-Xmx[0-9]+[mMgG]/-Xmx${XMX_MB}m/g" /IGV_Linux_2.16.0/igv.sh
+            # Terminate the JVM immediately on OutOfMemoryError; otherwise IGV catches it
+            # internally and the process never exits.
+            export _JAVA_OPTIONS="-XX:+ExitOnOutOfMemoryError ${_JAVA_OPTIONS:-}"
+
+            # Retry the batch: the hg38 reference is fetched from igv.org over HTTP and can
+            # fail transiently. set -e does not trip on a failure in the until-condition.
+            n=0
+            until xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{igv_genome} -b pe.all.txt; do
+                n=$((n+1))
+                if [ $n -ge 3 ]; then echo "IGV batch failed after $n attempts" >&2; exit 1; fi
+                echo "IGV batch attempt $n failed; retrying in $((n*30))s..." >&2
+                sleep $((n*30))
+            done
             tar -czf ~{family}_pe_igv_plots.tar.gz pe_igv_plots
 
         >>>
@@ -231,13 +258,19 @@ task runIGV_whole_genome_parse{
     }
 
     Float input_size = size(select_all([varfile, ped_file, gene_track, gene_track_index]), "GB") + size(annotation_beds, "GB")
-    # igv.sh launches the JVM with -Xmx8g, so the VM must exceed 8 GiB or the kernel
-    # OOM-kills IGV (exit 137) on deep/multi-member long-read pileups. Override per-run
-    # via runtime_attr_igv for exceptionally large families.
-    Float base_mem_gb = 12.0
+    # Peak IGV RAM is driven by how many BAM tracks are held at once (load-once) and the
+    # capped read depth, NOT the variant count (variants render sequentially). Scale the
+    # heap by sample count, with a hard ceiling so a large family can't run up cloud cost.
+    # The JVM's -Xmx is set at runtime from the VM's actual RAM (see command block).
+    Int n_samples = length(samples)
+    Float base_mem_gb = 6.0
+    Float mem_per_sample_gb = 2.0
+    Float mem_ceiling_gb = 20.0
+    Float mem_uncapped_gb = base_mem_gb + mem_per_sample_gb * n_samples
+    Float dynamic_mem_gb = if mem_uncapped_gb < mem_ceiling_gb then mem_uncapped_gb else mem_ceiling_gb
 
     RuntimeAttr default_attr = object {
-                                      mem_gb: base_mem_gb,
+                                      mem_gb: dynamic_mem_gb,
                                       disk_gb: ceil(20 + input_size * 2),
                                       cpu: 1,
                                       preemptible: 2,
@@ -307,7 +340,25 @@ task runIGV_whole_genome_parse{
             # one IGV batch (and one JVM) for all of this family's variants
             python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} --status_labels $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
             bash pe.all.sh
-            xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{igv_genome} -b pe.all.txt
+
+            # Size the IGV JVM heap to this VM's actual RAM (mem_gb is set per-family in the
+            # runtime block). Leave ~20% headroom for xvfb/OS/samtools.
+            MEM_KB=$(awk '/MemTotal/{print $2}' /proc/meminfo)
+            XMX_MB=$(( MEM_KB * 80 / 100 / 1024 ))
+            sed -i -E "s/-Xmx[0-9]+[mMgG]/-Xmx${XMX_MB}m/g" /IGV_Linux_2.16.0/igv.sh
+            # Terminate the JVM immediately on OutOfMemoryError; otherwise IGV catches it
+            # internally and the process never exits.
+            export _JAVA_OPTIONS="-XX:+ExitOnOutOfMemoryError ${_JAVA_OPTIONS:-}"
+
+            # Retry the batch: the hg38 reference is fetched from igv.org over HTTP and can
+            # fail transiently. set -e does not trip on a failure in the until-condition.
+            n=0
+            until xvfb-run --server-args="-screen 0, 1920x1080x24" bash /IGV_Linux_2.16.0/igv.sh -g ~{igv_genome} -b pe.all.txt; do
+                n=$((n+1))
+                if [ $n -ge 3 ]; then echo "IGV batch failed after $n attempts" >&2; exit 1; fi
+                echo "IGV batch attempt $n failed; retrying in $((n*30))s..." >&2
+                sleep $((n*30))
+            done
             tar -czf ~{family}_pe_igv_plots.tar.gz pe_igv_plots
 
         >>>

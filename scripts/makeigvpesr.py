@@ -139,23 +139,100 @@ for sample_id in (samples_list if not status_labels else []):
 			cram_list.insert(1, affected_cram_file)
 print(cram_list)
 
+def build_tracks(carriers):
+    """Ordered [(load_arg, squish_name)] for a carrier set, creating symlinks as a side
+    effect in status mode. Track label + order depend only on affected status (family-level,
+    constant) and this carrier set, so the returned list is identical for any two variants
+    that share a carrier set -- which is what lets us load a group's tracks exactly once."""
+    tracks = []
+    if status_labels:
+        ordered = sorted(cram_list,
+                         key=lambda c: (status_rank(sample_from_bam(c), affected_samples, carriers),
+                                        cram_list.index(c)))
+        for c in ordered:
+            s = sample_from_bam(c)
+            link = status_label(s, affected_samples, carriers) + "." + s + ".bam"
+            if not os.path.lexists(link):
+                os.symlink(os.path.abspath(c), link)
+            for idx in (c + ".bai", (c[:-4] if c.endswith(".bam") else c) + ".bai"):
+                if os.path.exists(idx):
+                    if not os.path.lexists(link + ".bai"):
+                        os.symlink(os.path.abspath(idx), link + ".bai")
+                    break
+            tracks.append((link, link))
+    else:
+        for c in cram_list:
+            tracks.append((c, os.path.basename(c)))
+    return tracks
+
+
+def carrier_key(dat):
+    """Group key: the carrier set (status mode) determines the track config. Non-status mode
+    uses one fixed config for the whole family, so everything collapses to a single group."""
+    if not status_labels:
+        return frozenset()
+    return frozenset(dat[5].split(',')) if len(dat) > 5 and dat[5] else frozenset()
+
+
+# Read all variants, then bucket them by carrier set. Each variant still produces its own
+# PNG(s) named by ID, so regrouping the render order does not change any output file.
+groups = {}
+group_order = []
+with open(varfile, 'r') as f:
+    for line in f:
+        dat = line.rstrip().split("\t")
+        Chr = dat[0]
+        if not chromosome == 'all' and not Chr == chromosome:
+            continue
+        k = carrier_key(dat)
+        if k not in groups:
+            groups[k] = []
+            group_order.append(k)
+        groups[k].append(dat)
+
 with open(bamfiscript,'w') as h:
     h.write("#!/bin/bash\n")
     h.write("set -e\n")
     h.write("mkdir -p {}\n".format(bamdir))
     h.write("mkdir -p {}\n".format(outdir))
     with open(igvfile,'w') as g:
-        g.write('new\n')
-        if genome:
-            g.write('genome ' + genome + '\n')
-        # keep annotation/gene feature tracks at a standard (collapsed) height
-        g.write('preference EXPAND_FEATURE_TRACKS false\n')
-        with open(varfile,'r') as f:
-            for line in f:
-                dat=line.rstrip().split("\t")
+        for k in group_order:
+            carriers = set(k)
+            # new session per carrier group; load its BAM tracks + the (shared) annotation and
+            # gene tracks exactly ONCE, then render every variant in the group without reloading.
+            g.write('new\n')
+            if genome:
+                g.write('genome ' + genome + '\n')
+            # keep annotation/gene feature tracks at a standard (collapsed) height
+            g.write('preference EXPAND_FEATURE_TRACKS false\n')
+            # cap read depth (~100x) so deep long-read pileups don't exhaust the JVM heap
+            g.write('preference SAM.DOWNSAMPLE_READS true\n')
+            g.write('preference SAM.SAMPLING_READ_LIMIT 100\n')
+
+            # track the loaded read files so we can re-squish just their alignment tracks
+            # after a blanket collapse (see snapshot block)
+            loaded_bams = []
+            for load_arg, squish_name in build_tracks(carriers):
+                g.write('load ' + load_arg + '\n')
+                loaded_bams.append(squish_name)
+
+            # reference annotation tracks (segdups, N-gaps, ...) so IGV-only variants
+            # still show them; symlink to the given name for a clean track label
+            for i, abed in enumerate(annotation_beds):
+                ext = ".bed.gz" if abed.endswith(".bed.gz") else (os.path.splitext(abed)[1] or ".bed")
+                if annotation_names and i < len(annotation_names):
+                    alink = annotation_names[i] + ext
+                    if not os.path.lexists(alink):
+                        os.symlink(os.path.abspath(abed), alink)
+                    g.write('load ' + alink + '\n')
+                else:
+                    g.write('load ' + os.path.abspath(abed) + '\n')
+            # gene annotation track
+            if genes:
+                g.write('load ' + os.path.abspath(genes) + '\n')
+
+            for dat in groups[k]:
                 Chr=dat[0]
-                if not chromosome=='all':
-                    if not Chr == chromosome: continue
                 Start=int(dat[1])
                 End=int(dat[2])
                 ID=dat[3]
@@ -175,46 +252,6 @@ with open(bamfiscript,'w') as h:
                     else:
                         g.write('preference SAM.HIDE_SMALL_INDEL false\n')
                         g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 1\n')
-
-                # track the loaded read files so we can re-squish just their
-                # alignment tracks after a blanket collapse (see snapshot block)
-                loaded_bams = []
-                if status_labels:
-                    carriers = set(dat[5].split(',')) if len(dat) > 5 and dat[5] else set()
-                    ordered = sorted(cram_list,
-                                     key=lambda c: (status_rank(sample_from_bam(c), affected_samples, carriers),
-                                                    cram_list.index(c)))
-                    for c in ordered:
-                        s = sample_from_bam(c)
-                        link = status_label(s, affected_samples, carriers) + "." + s + ".bam"
-                        if not os.path.lexists(link):
-                            os.symlink(os.path.abspath(c), link)
-                        for idx in (c + ".bai", (c[:-4] if c.endswith(".bam") else c) + ".bai"):
-                            if os.path.exists(idx):
-                                if not os.path.lexists(link + ".bai"):
-                                    os.symlink(os.path.abspath(idx), link + ".bai")
-                                break
-                        g.write('load ' + link + '\n')
-                        loaded_bams.append(link)
-                else:
-                    for cram in cram_list:
-                        g.write('load '+cram+'\n')
-                        loaded_bams.append(os.path.basename(cram))
-
-                # reference annotation tracks (segdups, N-gaps, ...) so IGV-only variants
-                # still show them; symlink to the given name for a clean track label
-                for i, abed in enumerate(annotation_beds):
-                    ext = ".bed.gz" if abed.endswith(".bed.gz") else (os.path.splitext(abed)[1] or ".bed")
-                    if annotation_names and i < len(annotation_names):
-                        alink = annotation_names[i] + ext
-                        if not os.path.lexists(alink):
-                            os.symlink(os.path.abspath(abed), alink)
-                        g.write('load ' + alink + '\n')
-                    else:
-                        g.write('load ' + os.path.abspath(abed) + '\n')
-                # gene annotation track
-                if genes:
-                    g.write('load ' + os.path.abspath(genes) + '\n')
 
                 if Length_total<int(igv_max_window):
                     if Length_total<1000:
@@ -255,13 +292,4 @@ with open(bamfiscript,'w') as h:
                         g.write('squish ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.right.png\n' )
-                # g.write('goto '+Chr+":"+Start+'-'+End+'\n')
-                # g.write('sort base\n')
-                # g.write('viewaspairs\n')
-                # g.write('squish\n')
-                # g.write('snapshotDirectory '+outdir+'\n')
-                # g.write('snapshot '+ID+'.png\n' )
-                g.write('new\n')
-                if genome:
-                    g.write('genome ' + genome + '\n')
         g.write('exit\n')

@@ -47,7 +47,7 @@ RUN pip3 install --no-cache-dir \
         "numpy>=1.21" \
         "pandas>=1.3"
 
-ARG VI_COMMIT=720ef73c1b2a4abc56c8fe417301580743c22031
+ARG VI_COMMIT=4d0f7b37f3a4b52b1d9bdf980f945ed8f278e699
 RUN git clone https://github.com/yuliamostovoy/variant-interpretation.git \
         /src/variant-interpretation \
     && git -C /src/variant-interpretation checkout ${VI_COMMIT}

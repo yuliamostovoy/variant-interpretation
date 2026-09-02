@@ -233,7 +233,17 @@ task depth_plot {
         }
         while read sample bai bam; do
             gcs_cp "$bai" "$( basename $bam ).bai" || true
-            samtools view -b -o $sample.bam $bam -L regions.bed -M
+            # Retry the remote open with backoff: htslib gs:// opens fail transiently.
+            n=0
+            until samtools view -b -o $sample.bam $bam -L regions.bed -M; do
+                n=$((n+1))
+                if [ $n -ge 5 ]; then
+                    echo "samtools view failed after $n attempts for $bam" >&2
+                    exit 1
+                fi
+                echo "samtools view attempt $n failed for $bam; retrying in $((n*15))s..." >&2
+                sleep $((n*15))
+            done
             samtools index $sample.bam
             mosdepth --no-per-base --by windows.bed $sample $sample.bam
         done < fam_scc.txt
