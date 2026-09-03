@@ -46,14 +46,6 @@ task reformat_variants {
         RuntimeAttr? runtime_attr_override
     }
 
-    # optional per-sample genotype extraction from the source VCF (for the pedigree glyph)
-    String bcftools_cmd = if defined(variant_vcf)
-        then "bcftools query -f '%CHROM\\t%POS\\t%END\\t%ID\\t%INFO/SVTYPE[\\t%SAMPLE=%GT]\\n' " + select_first([variant_vcf]) + " > gts.raw.tsv"
-        else "echo 'no VCF supplied; skipping genotype extraction'"
-    String gt_arg = if defined(variant_vcf)
-        then "--genotypes-raw gts.raw.tsv --genotypes-out " + prefix + ".genotypes.tsv"
-        else ""
-
     Float input_size = size(select_all([variant_list, variant_vcf]), "GB")
     Float base_mem_gb = 3.75
 
@@ -71,12 +63,23 @@ task reformat_variants {
     command <<<
         set -euo pipefail
 
-        ~{bcftools_cmd}
+        # Optional per-sample genotypes for the pedigree glyph. Reference the VCF as a File
+        # placeholder (not concatenated into a String) so Cromwell localizes it and bcftools
+        # reads the local copy -- coercing a File to String yields the raw gs:// path, which
+        # htslib then fails to open ("Permission denied").
+        VCF="~{default='' variant_vcf}"
+        GT_ARGS=()
+        if [ -n "$VCF" ]; then
+            bcftools query \
+                -f '%CHROM\t%POS\t%END\t%ID\t%INFO/SVTYPE[\t%SAMPLE=%GT]\n' \
+                "$VCF" > gts.raw.tsv
+            GT_ARGS=(--genotypes-raw gts.raw.tsv --genotypes-out ~{prefix}.genotypes.tsv)
+        fi
 
         python3 /src/variant-interpretation/scripts/reformat_variants_for_visualization.py \
             --input ~{variant_list} \
             --output ~{prefix}.variants_for_visualization.bed \
-            ~{gt_arg}
+            "${GT_ARGS[@]}"
 
         bgzip ~{prefix}.variants_for_visualization.bed
         # ensure the genotypes output always exists (empty when no VCF was supplied)
