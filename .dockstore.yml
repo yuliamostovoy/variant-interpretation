@@ -3,4 +3,3 @@ workflows:
   - subclass: WDL
     name: RunVisualizePlotsLongRead
     primaryDescriptorPath: /wdl/RunVisualizePlotsLongRead.wdl
-    filters:
