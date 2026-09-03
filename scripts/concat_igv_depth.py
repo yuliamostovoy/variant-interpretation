@@ -20,7 +20,12 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+import draw_pedigree
+import sample_labels
+
 HEADER_H = 60
+PED_H = 500           # target pedigree height in the header band
+HEADER_PAD = 16
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -84,15 +89,9 @@ def hstack_imgs(left, right):
     return out
 
 
-def header_img(text, width):
-    img = Image.new("RGB", (width, HEADER_H), (255, 255, 255))
-    draw = ImageDraw.Draw(img)
-    draw.text((20, HEADER_H // 2 - 14), text, fill=(0, 0, 0), font=_load_font())
-    return img
-
-
 def load_variant_info(varfile):
-    """{ID: (chrom, start, end, svtype)} from the canonical 6-col BED (maybe gzipped)."""
+    """{ID: (chrom, start, end, svtype, carriers)} from the canonical 6-col BED (maybe gzipped);
+    carriers is the set of sample IDs in col6 (used to locate the variant's family)."""
     info = {}
     opener = gzip.open if varfile.endswith(".gz") else open
     with opener(varfile, "rt") as fh:
@@ -103,10 +102,44 @@ def load_variant_info(varfile):
             if len(f) < 5:
                 continue
             try:
-                info[f[3]] = (f[0], int(f[1]), int(f[2]), f[4])
+                carriers = set(f[5].split(",")) if len(f) > 5 and f[5] else set()
+                info[f[3]] = (f[0], int(f[1]), int(f[2]), f[4], carriers)
             except ValueError:
                 continue
     return info
+
+
+def load_genotypes(path):
+    """{ID: {sample: GT}} from the reconciled 'ID<TAB>sample=GT,...' table (maybe gzipped)."""
+    gts = {}
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, "rt") as fh:
+        for line in fh:
+            if not line.strip() or line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            d = {}
+            if len(f) > 1 and f[1]:
+                for tok in f[1].split(","):
+                    tok = tok.strip()
+                    if "=" in tok:
+                        s, gt = tok.split("=", 1)
+                        d[s.strip()] = gt.strip()
+            gts[f[0]] = d
+    return gts
+
+
+def build_ped_context(ped_path, genotypes_path):
+    """Bundle everything the pedigree glyph needs: family rows, per-family role labels, a
+    sample->family index, and the per-variant genotype map. Returns None if no ped is given."""
+    if not ped_path:
+        return None
+    fams = sample_labels.read_ped_families(ped_path)
+    roles = sample_labels.assign_labels(ped_path)
+    sample_family = {m["iid"]: fam for fam, members in fams.items() for m in members}
+    genotypes = load_genotypes(genotypes_path) if genotypes_path else {}
+    return {"fams": fams, "roles": roles,
+            "sample_family": sample_family, "genotypes": genotypes}
 
 
 def variant_id_for(stem, info):
@@ -133,15 +166,54 @@ def header_text_for(stem, info):
     vid = variant_id_for(stem, info)
     if vid is None:
         return None
-    chrom, start, end, svtype = info[vid]
+    chrom, start, end, svtype = info[vid][:4]
     return f"{vid}   {end - start:,} bp   {svtype}   {chrom}:{start}-{end}"
 
 
-def finalize(body, stem, info, out_path):
-    if info:
-        text = header_text_for(stem, info)
-        if text:
-            body = vstack_imgs(header_img(text, body.width), body)
+def pedigree_for(stem, info, ped_ctx):
+    """Pedigree image for a variant's family (located via its carriers), annotated with the
+    variant's genotypes + carriers, or None if there is no ped or no resolvable family."""
+    if not ped_ctx:
+        return None
+    vid = variant_id_for(stem, info)
+    if vid is None:
+        return None
+    carriers = info[vid][4]
+    fam = next((ped_ctx["sample_family"][c] for c in sorted(carriers)
+                if c in ped_ctx["sample_family"]), None)
+    if fam is None:
+        return None
+    return draw_pedigree.draw_pedigree(
+        ped_ctx["fams"].get(fam, []), ped_ctx["roles"].get(fam, {}),
+        gts=ped_ctx["genotypes"].get(vid, {}), carriers=carriers, target_h=PED_H)
+
+
+def build_header(stem, info, width, ped_ctx):
+    """A header band (width `width`): SV-info text on the left, pedigree on the right. Returns
+    None when there is neither text nor pedigree to show."""
+    text = header_text_for(stem, info) if info else None
+    ped_img = pedigree_for(stem, info, ped_ctx)
+    if text is None and ped_img is None:
+        return None
+    if ped_img is not None and ped_img.width > width * 0.48:      # keep room for the text
+        max_w = max(1, int(width * 0.48))
+        ped_img = ped_img.resize((max_w, max(1, int(ped_img.height * max_w / ped_img.width))))
+
+    height = max(HEADER_H, (ped_img.height + HEADER_PAD) if ped_img is not None else 0)
+    header = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(header)
+    if text:
+        draw.text((20, height // 2 - 20), text, fill=(0, 0, 0), font=_load_font(40))
+    if ped_img is not None:
+        header.paste(ped_img, (max(0, width - ped_img.width - HEADER_PAD),
+                               max(0, (height - ped_img.height) // 2)))
+    return header
+
+
+def finalize(body, stem, info, out_path, ped_ctx=None):
+    header = build_header(stem, info, body.width, ped_ctx)
+    if header is not None:
+        body = vstack_imgs(header, body)
     body.save(out_path)
 
 
@@ -153,10 +225,15 @@ def main():
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--varfile", default=None,
                     help="canonical 6-col BED for the SV-info header (chrom,start,end,ID,svtype,samples)")
+    ap.add_argument("--ped", default=None,
+                    help="ped file; enables the per-variant pedigree glyph in the header")
+    ap.add_argument("--genotypes", default=None,
+                    help="reconciled 'ID<TAB>sample=GT,...' table to annotate the pedigree")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
     info = load_variant_info(args.varfile) if args.varfile else {}
+    ped_ctx = build_ped_context(args.ped, args.genotypes)
 
     igv_plots = collect_igv_plots(args.igv_dir)
     depth_plots = {os.path.basename(p): p for p in glob.glob(os.path.join(args.depth_dir, "*.png"))}
@@ -172,14 +249,14 @@ def main():
         else:
             body = igv_img
             n_igv_only += 1
-        finalize(body, stem, info, out_path)
+        finalize(body, stem, info, out_path, ped_ctx)
 
     # depth plots with no matching IGV plot (shouldn't happen, but don't drop them silently)
     for name, depth_path in sorted(depth_plots.items()):
         if name not in igv_plots:
             stem = name[:-len(".png")]
             finalize(Image.open(depth_path).convert("RGB"), stem, info,
-                     os.path.join(args.outdir, reordered_name(stem, info)))
+                     os.path.join(args.outdir, reordered_name(stem, info)), ped_ctx)
             sys.stderr.write(f"WARNING: depth plot {name} had no matching IGV plot\n")
 
     sys.stderr.write(f"Combined {n_combined}, IGV-only {n_igv_only}, written to {args.outdir}\n")

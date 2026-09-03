@@ -1,6 +1,7 @@
 import sys,os,argparse
 import numpy as np
 import pandas as pd
+import sample_labels
 
 parser = argparse.ArgumentParser("makeigvsplit_trio.py")
 parser.add_argument('-v', '--varfile', type=str, help='variant file including CHR, POS, END and SVID')
@@ -43,16 +44,9 @@ annotation_beds = args.annotation_beds
 annotation_names = args.annotation_names
 genes = args.genes
 
-
-def status_label(sample, affected, carriers):
-    aff, car = sample in affected, sample in carriers
-    if aff and car:
-        return "AFFECTED_CARRIER"
-    if car:
-        return "CARRIER"
-    if aff:
-        return "AFFECTED"
-    return "unaffected"
+# per-sample relationship-role labels (Pro/Mo/Fa/Sib/MGM.../Rel), shared with the depth plot and
+# the pedigree glyph so a track maps to the same individual on every surface
+roles = sample_labels.assign_labels(pedigree).get(fam_id, {})
 
 
 def status_rank(sample, affected, carriers):
@@ -140,29 +134,29 @@ for sample_id in (samples_list if not status_labels else []):
 print(cram_list)
 
 def build_tracks(carriers):
-    """Ordered [(load_arg, squish_name)] for a carrier set, creating symlinks as a side
-    effect in status mode. Track label + order depend only on affected status (family-level,
-    constant) and this carrier set, so the returned list is identical for any two variants
-    that share a carrier set -- which is what lets us load a group's tracks exactly once."""
-    tracks = []
+    """Ordered [(load_arg, squish_name)] for a carrier set. Each track is loaded through a
+    symlink named `<role>.<sample>.bam` so IGV labels it by relationship role (Pro/Mo/Fa/...),
+    matching the depth legend and pedigree. The role is per-sample constant, so the track set of
+    a carrier group is identical across its variants -- which is what lets us load it once. In
+    status mode the tracks are additionally ordered by affected+carrier status."""
     if status_labels:
         ordered = sorted(cram_list,
                          key=lambda c: (status_rank(sample_from_bam(c), affected_samples, carriers),
                                         cram_list.index(c)))
-        for c in ordered:
-            s = sample_from_bam(c)
-            link = status_label(s, affected_samples, carriers) + "." + s + ".bam"
-            if not os.path.lexists(link):
-                os.symlink(os.path.abspath(c), link)
-            for idx in (c + ".bai", (c[:-4] if c.endswith(".bam") else c) + ".bai"):
-                if os.path.exists(idx):
-                    if not os.path.lexists(link + ".bai"):
-                        os.symlink(os.path.abspath(idx), link + ".bai")
-                    break
-            tracks.append((link, link))
     else:
-        for c in cram_list:
-            tracks.append((c, os.path.basename(c)))
+        ordered = cram_list
+    tracks = []
+    for c in ordered:
+        s = sample_from_bam(c)
+        link = roles.get(s, s) + "." + s + ".bam"
+        if not os.path.lexists(link):
+            os.symlink(os.path.abspath(c), link)
+        for idx in (c + ".bai", (c[:-4] if c.endswith(".bam") else c) + ".bai"):
+            if os.path.exists(idx):
+                if not os.path.lexists(link + ".bai"):
+                    os.symlink(os.path.abspath(idx), link + ".bai")
+                break
+        tracks.append((link, link))
     return tracks
 
 

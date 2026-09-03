@@ -13,6 +13,8 @@ import "Structs2.wdl"
 workflow ReformatVariants {
     input {
         File variant_list
+        File? variant_vcf
+        File? variant_vcf_index
         String prefix
         String variant_interpretation_docker
         RuntimeAttr? runtime_attr_override
@@ -21,6 +23,8 @@ workflow ReformatVariants {
     call reformat_variants {
         input:
             variant_list = variant_list,
+            variant_vcf = variant_vcf,
+            variant_vcf_index = variant_vcf_index,
             prefix = prefix,
             variant_interpretation_docker = variant_interpretation_docker,
             runtime_attr_override = runtime_attr_override
@@ -28,18 +32,29 @@ workflow ReformatVariants {
 
     output {
         File varfile = reformat_variants.varfile
+        File genotypes = reformat_variants.genotypes
     }
 }
 
 task reformat_variants {
     input {
         File variant_list
+        File? variant_vcf
+        File? variant_vcf_index
         String prefix
         String variant_interpretation_docker
         RuntimeAttr? runtime_attr_override
     }
 
-    Float input_size = size(variant_list, "GB")
+    # optional per-sample genotype extraction from the source VCF (for the pedigree glyph)
+    String bcftools_cmd = if defined(variant_vcf)
+        then "bcftools query -f '%CHROM\\t%POS\\t%END\\t%ID\\t%INFO/SVTYPE[\\t%SAMPLE=%GT]\\n' " + select_first([variant_vcf]) + " > gts.raw.tsv"
+        else "echo 'no VCF supplied; skipping genotype extraction'"
+    String gt_arg = if defined(variant_vcf)
+        then "--genotypes-raw gts.raw.tsv --genotypes-out " + prefix + ".genotypes.tsv"
+        else ""
+
+    Float input_size = size(select_all([variant_list, variant_vcf]), "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
@@ -56,15 +71,21 @@ task reformat_variants {
     command <<<
         set -euo pipefail
 
+        ~{bcftools_cmd}
+
         python3 /src/variant-interpretation/scripts/reformat_variants_for_visualization.py \
             --input ~{variant_list} \
-            --output ~{prefix}.variants_for_visualization.bed
+            --output ~{prefix}.variants_for_visualization.bed \
+            ~{gt_arg}
 
         bgzip ~{prefix}.variants_for_visualization.bed
+        # ensure the genotypes output always exists (empty when no VCF was supplied)
+        touch ~{prefix}.genotypes.tsv
     >>>
 
     output {
         File varfile = "~{prefix}.variants_for_visualization.bed.gz"
+        File genotypes = "~{prefix}.genotypes.tsv"
     }
 
     runtime {

@@ -25,6 +25,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import sample_labels
+
 
 def read_ped(ped_file):
     """Return dict sample -> {'family','affected'} using the first 6 standard columns."""
@@ -59,6 +61,23 @@ def sample_from_filename(path):
 # colorblind-safe (Okabe-Ito) palette for annotation tracks
 ANNOTATION_PALETTE = ["#E69F00", "#56B4E9", "#009E73", "#D55E00",
                       "#CC79A7", "#0072B2", "#F0E442", "#999999"]
+
+# per-sample line colors (Okabe-Ito minus the pale yellow/grey that read poorly as thin lines on
+# white); cycled with LINESTYLES so more samples than colors stay distinguishable
+SAMPLE_PALETTE = ["#0072B2", "#D55E00", "#009E73", "#CC79A7",
+                  "#56B4E9", "#E69F00", "#000000"]
+LINESTYLES = ["-", "--", ":", "-."]
+
+
+def sample_styles(samples):
+    """Deterministic {sample: (color, linestyle)} keyed by sorted sample id, so an individual
+    keeps the same style across every variant's plot."""
+    styles = {}
+    for i, s in enumerate(sorted(samples)):
+        color = SAMPLE_PALETTE[i % len(SAMPLE_PALETTE)]
+        ls = LINESTYLES[(i // len(SAMPLE_PALETTE)) % len(LINESTYLES)]
+        styles[s] = (color, ls)
+    return styles
 
 
 def load_bed_intervals(path):
@@ -111,6 +130,7 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
     ped = read_ped(args.ped)
     affected = {s for s, info in ped.items() if str(info.get("affected")) == "2"}
+    roles = sample_labels.assign_labels(args.ped).get(args.family, {})
 
     annotations = []
     for i, bed_path in enumerate(args.annotation_beds):
@@ -124,6 +144,7 @@ def main():
         depth[sample_from_filename(path)] = load_depth(path)
     if not depth:
         sys.exit(f"ERROR: no *.regions.bed.gz found in {args.depth_dir}")
+    styles = sample_styles(depth.keys())
 
     n_plots = 0
     with open(args.bed) as fh:
@@ -154,12 +175,20 @@ def main():
                 pts = sorted(zip(xs, ys))
                 xs, ys = [p[0] for p in pts], [p[1] for p in pts]
                 is_carrier = sample in carriers
+                color, ls = styles.get(sample, ("0.4", "-"))
+                role = roles.get(sample, "")
+                base = (role + " " + sample).strip() if role else sample
                 tags = (["carrier"] if is_carrier else []) + (["affected"] if sample in affected else [])
-                label = sample + (" (" + ", ".join(tags) + ")" if tags else "")
-                ax.plot(xs, ys,
-                        color="crimson" if is_carrier else "0.7",
-                        lw=2.0 if is_carrier else 1.0,
-                        zorder=3 if is_carrier else 1,
+                label = base + (" (" + ", ".join(tags) + ")" if tags else "")
+                # carriers pop via weight + a white halo + top z-order, independent of hue, so
+                # multiple carriers stay individually distinguishable by color
+                if is_carrier:
+                    ax.plot(xs, ys, color="white", lw=4.8, zorder=4,
+                            solid_capstyle="round")
+                ax.plot(xs, ys, color=color, ls=ls,
+                        lw=2.6 if is_carrier else 1.3,
+                        alpha=1.0 if is_carrier else 0.85,
+                        zorder=5 if is_carrier else 2,
                         label=label)
 
             ax.axvspan(start, end, color="0.6", alpha=0.35, zorder=0)

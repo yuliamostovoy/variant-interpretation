@@ -17,7 +17,9 @@ import "LongReadDepthPlot.wdl" as depth
 
 workflow VisualizePlotsLongRead {
     input {
-        File variant_list          # curated subset (bcftools-query TSV: chrom,POS0,END,ID,SVTYPE,samples)
+        File variant_list          # curated subset (bcftools-query TSV: chrom,POS,END,ID,SVTYPE,samples)
+        File? variant_vcf          # optional source VCF; supplies per-sample genotypes for the pedigree glyph
+        File? variant_vcf_index
         File pedfile
         Array[String] sample_ids
         Array[String] bams
@@ -76,6 +78,8 @@ workflow VisualizePlotsLongRead {
     call reformat.ReformatVariants as reformat_variants {
         input:
             variant_list = variant_list,
+            variant_vcf = variant_vcf,
+            variant_vcf_index = variant_vcf_index,
             prefix = prefix,
             variant_interpretation_docker = long_read_visualize_docker,
             runtime_attr_override = runtime_attr_reformat
@@ -137,6 +141,8 @@ workflow VisualizePlotsLongRead {
                 igv_tar = select_first([igv_plots.tar_gz_pe]),
                 depth_tar = select_first([depth_plots.Plots]),
                 varfile = reformat_variants.varfile,
+                pedfile = pedfile,
+                genotypes = reformat_variants.genotypes,
                 prefix = prefix,
                 long_read_visualize_docker = long_read_visualize_docker,
                 runtime_attr_override = runtime_attr_concat
@@ -183,12 +189,14 @@ task concat_plots {
         File igv_tar
         File depth_tar
         File varfile
+        File pedfile
+        File genotypes
         String prefix
         String long_read_visualize_docker
         RuntimeAttr? runtime_attr_override
     }
 
-    Float input_size = size(select_all([igv_tar, depth_tar, varfile]), "GB")
+    Float input_size = size(select_all([igv_tar, depth_tar, varfile, pedfile, genotypes]), "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
@@ -218,6 +226,8 @@ task concat_plots {
             --igv-dir igv_pngs \
             --depth-dir depth_pngs \
             --varfile ~{varfile} \
+            --ped ~{pedfile} \
+            --genotypes ~{genotypes} \
             --outdir ~{prefix}_igv_depth_plots
 
         tar -czf ~{prefix}_igv_depth_plots.tar.gz ~{prefix}_igv_depth_plots
