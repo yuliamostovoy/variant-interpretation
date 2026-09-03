@@ -4,5 +4,3 @@ workflows:
     name: RunVisualizePlotsLongRead
     primaryDescriptorPath: /wdl/RunVisualizePlotsLongRead.wdl
     filters:
-      branches:
-        - main
