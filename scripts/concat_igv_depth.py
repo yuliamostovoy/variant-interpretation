@@ -176,19 +176,36 @@ def header_text_for(stem, info):
     return f"{vid}   {size:,} bp   {svtype}   {chrom}:{start}-{end}"
 
 
+def family_for(stem, info):
+    """The family embedded in a `{family}_{ID}` stem, or None if the stem is a bare ID."""
+    vid = variant_id_for(stem, info)
+    if vid is None or stem == vid:
+        return None
+    fam = stem[:-(len(vid) + 1)]      # strip trailing "_<vid>"
+    return fam or None
+
+
 def pedigree_for(stem, info, ped_ctx):
-    """Pedigree image for a variant's family (located via its carriers), annotated with the
-    variant's genotypes + carriers, or None if there is no ped or no resolvable family."""
+    """Pedigree image for the family whose plot this stem is (each carrier's family gets its own
+    `{family}_{ID}` combined plot), annotated with the variant's genotypes + carriers, or None if
+    there is no ped or no resolvable family."""
     if not ped_ctx:
         return None
     vid = variant_id_for(stem, info)
     if vid is None:
         return None
-    carriers = info[vid][4]
-    fam = next((ped_ctx["sample_family"][c] for c in sorted(carriers)
-                if c in ped_ctx["sample_family"]), None)
+    # Draw the family named in the stem so a multi-family variant renders the right tree per plot;
+    # fall back to the carriers' family only for a bare-ID stem with no family prefix.
+    fam = family_for(stem, info)
+    if fam is None or fam not in ped_ctx["fams"]:
+        carriers = info[vid][4]
+        fam = next((ped_ctx["sample_family"][c] for c in sorted(carriers)
+                    if c in ped_ctx["sample_family"]), None)
     if fam is None:
         return None
+    # restrict carriers to this family's members so only its own affected nodes are highlighted
+    fam_members = {m["iid"] for m in ped_ctx["fams"].get(fam, [])}
+    carriers = info[vid][4] & fam_members
     return draw_pedigree.draw_pedigree(
         ped_ctx["fams"].get(fam, []), ped_ctx["roles"].get(fam, {}),
         gts=ped_ctx["genotypes"].get(vid, {}), carriers=carriers, target_h=PED_H)
@@ -201,15 +218,24 @@ def build_header(stem, info, width, ped_ctx):
     ped_img = pedigree_for(stem, info, ped_ctx)
     if text is None and ped_img is None:
         return None
-    if ped_img is not None and ped_img.width > width * 0.48:      # keep room for the text
-        max_w = max(1, int(width * 0.48))
-        ped_img = ped_img.resize((max_w, max(1, int(ped_img.height * max_w / ped_img.width))))
+
+    font = _load_font(40)
+    text_x = 20
+    # right edge of the text so the pedigree can be scaled into the space that remains, rather
+    # than overlapping the end of the label (a wide 3-child family used to cover part of it)
+    text_right = text_x + int(ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength(text, font=font)) \
+        if text else text_x
+    if ped_img is not None:
+        avail = width - text_right - 2 * HEADER_PAD
+        if avail < 1 or ped_img.width > avail:
+            max_w = max(1, avail)
+            ped_img = ped_img.resize((max_w, max(1, int(ped_img.height * max_w / ped_img.width))))
 
     height = max(HEADER_H, (ped_img.height + HEADER_PAD) if ped_img is not None else 0)
     header = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(header)
     if text:
-        draw.text((20, height // 2 - 20), text, fill=(0, 0, 0), font=_load_font(40))
+        draw.text((text_x, height // 2 - 20), text, fill=(0, 0, 0), font=font)
     if ped_img is not None:
         header.paste(ped_img, (max(0, width - ped_img.width - HEADER_PAD),
                                max(0, (height - ped_img.height) // 2)))
