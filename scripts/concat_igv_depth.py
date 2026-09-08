@@ -90,8 +90,9 @@ def hstack_imgs(left, right):
 
 
 def load_variant_info(varfile):
-    """{ID: (chrom, start, end, svtype, carriers)} from the canonical 6-col BED (maybe gzipped);
-    carriers is the set of sample IDs in col6 (used to locate the variant's family)."""
+    """{ID: (chrom, start, end, svtype, carriers, svlen)} from the canonical BED (maybe gzipped);
+    carriers is the set of sample IDs in col6 (used to locate the variant's family). svlen is the
+    optional 7th column (allele length in bp) or None when absent (older 6-col varfiles)."""
     info = {}
     opener = gzip.open if varfile.endswith(".gz") else open
     with opener(varfile, "rt") as fh:
@@ -103,7 +104,8 @@ def load_variant_info(varfile):
                 continue
             try:
                 carriers = set(f[5].split(",")) if len(f) > 5 and f[5] else set()
-                info[f[3]] = (f[0], int(f[1]), int(f[2]), f[4], carriers)
+                svlen = int(f[6]) if len(f) > 6 and f[6].strip() else None
+                info[f[3]] = (f[0], int(f[1]), int(f[2]), f[4], carriers, svlen)
             except ValueError:
                 continue
     return info
@@ -167,7 +169,11 @@ def header_text_for(stem, info):
     if vid is None:
         return None
     chrom, start, end, svtype = info[vid][:4]
-    return f"{vid}   {end - start:,} bp   {svtype}   {chrom}:{start}-{end}"
+    # allele length (7th varfile column) sizes insertions/deletions by their REF/ALT; older
+    # 6-col varfiles have no svlen, so fall back to the coordinate span
+    svlen = info[vid][5]
+    size = svlen if svlen is not None else end - start
+    return f"{vid}   {size:,} bp   {svtype}   {chrom}:{start}-{end}"
 
 
 def pedigree_for(stem, info, ped_ctx):

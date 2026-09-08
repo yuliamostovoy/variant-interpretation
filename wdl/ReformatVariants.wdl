@@ -2,9 +2,9 @@ version 1.0
 
 ##########################################################################################
 ##
-## Input adapter: takes a user-curated variant list and emits the canonical bgzipped
-## 6-column BED (chrom,start,end,ID,svtype,samples) with a header line that the IGV / depth
-## tracks consume.
+## Input adapter: takes a user-curated variant list and emits the canonical bgzipped BED
+## (chrom,start,end,ID,svtype,samples,svlen) with a header line that the IGV / depth tracks
+## consume. svlen is the allele length in bp (from REF/ALT via the VCF when available).
 ##
 ##########################################################################################
 
@@ -63,15 +63,39 @@ task reformat_variants {
     command <<<
         set -euo pipefail
 
-        # Optional per-sample genotypes for the pedigree glyph. Reference the VCF as a File
-        # placeholder (not concatenated into a String) so Cromwell localizes it and bcftools
-        # reads the local copy -- coercing a File to String yields the raw gs:// path, which
-        # htslib then fails to open ("Permission denied").
+        # Reference the VCF/index as File placeholders (not concatenated into a String) so
+        # Cromwell localizes them and bcftools reads the local copies -- coercing a File to
+        # String yields the raw gs:// path, which htslib then fails to open ("Permission denied").
         VCF="~{default='' variant_vcf}"
+        VCFIDX="~{default='' variant_vcf_index}"
+        INFO_ARGS=()
         GT_ARGS=()
         if [ -n "$VCF" ]; then
-            bcftools query \
-                -f '%CHROM\t%POS\t%END\t%ID\t%INFO/SVTYPE[\t%SAMPLE=%GT]\n' \
+            # Restrict the VCF queries to the plotted loci when an index is available (make it
+            # discoverable next to the localized VCF, which Cromwell may place apart); otherwise
+            # fall back to a full scan.
+            REGION=()
+            if [ -n "$VCFIDX" ]; then
+                case "$VCFIDX" in
+                    *.csi) ln -sf "$VCFIDX" "${VCF}.csi" ;;
+                    *)     ln -sf "$VCFIDX" "${VCF}.tbi" ;;
+                esac
+                awk 'BEGIN{FS=OFS="\t"} $2 ~ /^[0-9]+$/ {s=$2-1; if(s<0)s=0; print $1, s, $3}' \
+                    ~{variant_list} | sort -k1,1 -k2,2n > var_regions.bed
+                REGION=(-R var_regions.bed)
+            fi
+
+            # REF/ALT per variant (multiallelics split) for allele-length header sizing. Uses
+            # only always-defined fields, so it works on SNV/indel VCFs lacking SVTYPE/SVLEN.
+            bcftools view "${REGION[@]}" "$VCF" | bcftools norm -m- \
+                | bcftools query -f '%CHROM\t%POS\t%END\t%ID\t%REF\t%ALT\n' > variant_info.tsv
+            INFO_ARGS=(--variant-info variant_info.tsv)
+
+            # Per-sample genotypes for the pedigree glyph. SVTYPE is undefined in SNV/indel VCFs
+            # and querying an undefined tag aborts bcftools, so emit a literal '.' in that case.
+            if bcftools view -h "$VCF" | grep -q '##INFO=<ID=SVTYPE,'; then SVT='%INFO/SVTYPE'; else SVT='.'; fi
+            bcftools query "${REGION[@]}" \
+                -f "%CHROM\t%POS\t%END\t%ID\t${SVT}[\t%SAMPLE=%GT]\n" \
                 "$VCF" > gts.raw.tsv
             GT_ARGS=(--genotypes-raw gts.raw.tsv --genotypes-out ~{prefix}.genotypes.tsv)
         fi
@@ -79,6 +103,7 @@ task reformat_variants {
         python3 /src/variant-interpretation/scripts/reformat_variants_for_visualization.py \
             --input ~{variant_list} \
             --output ~{prefix}.variants_for_visualization.bed \
+            "${INFO_ARGS[@]}" \
             "${GT_ARGS[@]}"
 
         bgzip ~{prefix}.variants_for_visualization.bed

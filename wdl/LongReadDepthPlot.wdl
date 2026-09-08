@@ -3,8 +3,11 @@ version 1.0
 ##########################################################################################
 ##
 ## Long-read read-depth track for CNV (DEL/DUP) loci. Depth is computed on demand with
-## mosdepth over the plotted loci from each sample's BAM; normalization is local (per-sample
-## median over flanking windows). Emits one PNG per variant, tarred.
+## mosdepth over the plotted loci from each sample's BAM. Normalization is per-sample: given a
+## 'sample <tab> median_depth' file, depth is divided by that sample's genome-wide median so
+## autosomes sit at 1.0 and haploid chrX/chrY show the correct ploidy; without it, depth is
+## divided by a local median over the flanking windows (flat 1.0 baseline, no ploidy). Emits
+## one PNG per variant, tarred.
 ##
 ##########################################################################################
 
@@ -17,6 +20,10 @@ workflow LongReadDepthPlot {
         File ped_file
         File? fam_ids
         File sample_bam_bai      # sample <tab> bai <tab> bam
+        # optional 'sample <tab> genome-wide median_depth' file. When given, each sample's depth
+        # is divided by its own median so chrX/chrY ploidy is correct; when omitted,
+        # normalization falls back to the local flank median.
+        File? median_coverage_file
         Array[File] annotation_beds = []      # optional regions to highlight (N-gaps, segdups, ...)
         Array[String] annotation_names = []   # labels, same order as annotation_beds
         Int? flank
@@ -62,6 +69,7 @@ workflow LongReadDepthPlot {
                 per_family_bed = generate_per_family_bed.bed_file,
                 ped_file = ped_file,
                 sample_bam_bai = sample_bam_bai,
+                median_coverage_file = median_coverage_file,
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 flank = flank_,
@@ -109,11 +117,10 @@ task generate_families{
 
     command <<<
         set -euo pipefail
-        # col6 is the comma-separated carrier list; drop the missing-value '.' and blanks.
-        # A bare '.' left in the pattern file is a regex/word wildcard under grep and would
-        # match every ped row, selecting the entire cohort.
+        # col6 is the comma-separated carrier list; drop the '.' missing value and blanks so
+        # they are not used as grep patterns
         cat ~{bed} | gunzip | tail -n+2 | cut -f 1-6 | grep 'DEL\|DUP' | cut -f6 | tr ',' '\n' | sort -u | awk '$0 != "." && $0 != ""' > samples.txt
-        # -F: carrier IDs contain '.' — match them literally, not as regex; -w: whole word
+        # match carrier IDs literally (-F, they contain '.') and whole-word (-w)
         grep -F -w -f samples.txt ~{ped_file} | cut -f1 | sort -u > families.txt
         >>>
 
@@ -183,6 +190,7 @@ task depth_plot {
         File per_family_bed
         File ped_file
         File sample_bam_bai
+        File? median_coverage_file
         Array[File] annotation_beds = []
         Array[String] annotation_names = []
         Int flank
@@ -192,7 +200,7 @@ task depth_plot {
         String long_read_visualize_docker
         RuntimeAttr? runtime_attr_override
     }
-    Float input_size = size(select_all([per_family_bed, sample_bam_bai, ped_file]), "GB")
+    Float input_size = size(select_all([per_family_bed, sample_bam_bai, ped_file, median_coverage_file]), "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
@@ -220,17 +228,15 @@ task depth_plot {
             | sort -k1,1 -k2,2n | bedtools merge -i - > regions.bed
         bedtools makewindows -b regions.bed -w ~{window} > windows.bed
 
-        # OAuth token from the GCE metadata server (no gcloud SDK needed); htslib
-        # reads gs:// BAMs via libcurl using GCS_OAUTH_TOKEN
+        # OAuth token for htslib to read gs:// BAMs via libcurl (GCS_OAUTH_TOKEN)
         export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
             "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
             | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
-        # Bill a project for requester-pays buckets: htslib sends it as X-Goog-User-Project,
-        # and we add the same header to gcs_cp. Use this VM's compute project; ignored for
-        # non-requester-pays buckets.
+        # project billed for requester-pays buckets; sent as X-Goog-User-Project by htslib and
+        # gcs_cp, ignored for non-requester-pays buckets
         export GCS_REQUESTER_PAYS_PROJECT=$(curl -s -H "Metadata-Flavor: Google" \
             "http://metadata.google.internal/computeMetadata/v1/project/project-id")
-        # gs://bucket/obj -> local file, via the GCS XML API with a bearer token
+        # gs://bucket/obj -> local file via the GCS XML API with a bearer token
         gcs_cp () {
             p="${1#gs://}"
             curl -sf -H "Authorization: Bearer $GCS_OAUTH_TOKEN" \
@@ -239,7 +245,7 @@ task depth_plot {
         }
         while read sample bai bam; do
             gcs_cp "$bai" "$( basename $bam ).bai" || true
-            # Retry the remote open with backoff: htslib gs:// opens fail transiently.
+            # retry the remote open with backoff for transient gs:// failures
             n=0
             until samtools view -b -o $sample.bam $bam -L regions.bed -M; do
                 n=$((n+1))
@@ -262,6 +268,7 @@ task depth_plot {
             --flank-frac ~{flank_frac} \
             --depth-dir . \
             --outdir rd_plots \
+            ~{"--median-file " + median_coverage_file} \
             --annotation-beds ~{sep=" " annotation_beds} \
             --annotation-names ~{sep=" " annotation_names}
 

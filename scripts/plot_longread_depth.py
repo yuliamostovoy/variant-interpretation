@@ -9,9 +9,14 @@ variant is written to --outdir, named {family}_{ID}.png so it pairs with the IGV
 the same variant.
 
 Depth comes from mosdepth `--by <windows>` output: one {sample}.regions.bed.gz per sample,
-columns chrom,start,end,depth (mean depth per window). Normalization is local and per
-sample: divide by the median depth over that sample's windows lying in the flanks (outside
-the called interval), which needs no genome-wide coverage stats.
+columns chrom,start,end,depth (mean depth per window).
+
+Normalization is per sample. With --median-file (a 'sample <tab> genome-wide median_depth'
+table) each sample's depth is divided by its own genome-wide median, so autosomes sit at 1.0
+and a haploid chrX/chrY shows the correct ploidy (~0.5 in a male) without reading sex from the
+ped. For any sample not in that file (or when it is omitted), depth is divided by a local
+median over that sample's flank windows (outside the called interval): a flat 1.0 baseline
+that needs no genome-wide stats but does not recover sex-chromosome ploidy.
 """
 
 import argparse
@@ -107,6 +112,29 @@ def norm_factor(windows, chrom, cnv_start, cnv_end):
     return median(pool) if pool else 1.0
 
 
+def load_median_file(path):
+    """Load a 'sample <tab> genome-wide median_depth' file -> {sample: median}.
+
+    A header line (non-numeric second column) is tolerated; rows with a non-positive median
+    are skipped so those samples fall back to local normalization.
+    """
+    medians = {}
+    with open(path) as fh:
+        for line in fh:
+            if not line.strip() or line.startswith("#"):
+                continue
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 2:
+                continue
+            try:
+                val = float(f[1])
+            except ValueError:
+                continue  # header or malformed row
+            if val > 0:
+                medians[f[0]] = val
+    return medians
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -125,6 +153,10 @@ def main():
                     help="optional BED files of regions to highlight (e.g. N-gaps, segdups)")
     ap.add_argument("--annotation-names", nargs="*", default=[],
                     help="labels for --annotation-beds, in the same order")
+    ap.add_argument("--median-file",
+                    help="optional 'sample <tab> genome-wide median_depth' file; samples listed "
+                         "here are normalized by their own median (recovering chrX/chrY ploidy), "
+                         "others fall back to local flank normalization")
     args = ap.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -146,6 +178,9 @@ def main():
         sys.exit(f"ERROR: no *.regions.bed.gz found in {args.depth_dir}")
     styles = sample_styles(depth.keys())
 
+    # optional per-sample genome-wide medians; samples absent here use local normalization
+    medians = load_median_file(args.median_file) if args.median_file else {}
+
     n_plots = 0
     with open(args.bed) as fh:
         for line in fh:
@@ -159,12 +194,12 @@ def main():
 
             flank = max(args.flank, int(args.flank_frac * (end - start)))
             lo, hi = max(0, start - flank), end + flank
-            # 16in x 120dpi = 1920px wide, matching the IGV snapshot width so the combined
-            # figure needs no rescaling
+            # 16in x 120dpi = 1920px, matching the IGV snapshot width for stacking
             fig, ax = plt.subplots(figsize=(16, 4))
 
             for sample, windows in sorted(depth.items()):
-                factor = norm_factor(windows, chrom, start, end)
+                # genome-wide median when supplied (keeps chrX/chrY ploidy), else local flank
+                factor = medians.get(sample) or norm_factor(windows, chrom, start, end)
                 xs, ys = [], []
                 for (c, s, e, d) in windows:
                     if c == chrom and e > lo and s < hi:

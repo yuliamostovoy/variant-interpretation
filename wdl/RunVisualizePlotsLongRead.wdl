@@ -39,6 +39,10 @@ workflow VisualizePlotsLongRead {
         Int? depth_flank
         Float? depth_flank_frac
         Int? depth_window
+        # optional per-sample genome-wide median coverage, aligned by index to sample_ids/bams.
+        # When supplied the depth track normalizes each sample by its own median so chrX/chrY
+        # ploidy is correct; otherwise it falls back to a local per-region normalization.
+        Array[Float]? sample_median_coverages
         # optional reference BEDs to highlight on the depth plots (e.g. N-gaps, segdups),
         # with matching labels in the same order
         Array[File] annotation_beds = []
@@ -73,6 +77,17 @@ workflow VisualizePlotsLongRead {
             sv_base_mini_docker = sv_base_mini_docker
     }
     File sample_bam_bai = make_sample_manifest.manifest
+
+    # Zip the per-sample median coverages (aligned to sample_ids) into a 'sample <tab> median'
+    # file for the depth track; skipped entirely when no medians are provided.
+    if (defined(sample_median_coverages)) {
+        call make_median_manifest {
+            input:
+                sample_ids = sample_ids,
+                median_coverages = select_first([sample_median_coverages]),
+                sv_base_mini_docker = sv_base_mini_docker
+        }
+    }
 
     # normalize the curated variant list into the canonical bgzipped BED
     call reformat.ReformatVariants as reformat_variants {
@@ -122,6 +137,7 @@ workflow VisualizePlotsLongRead {
                 ped_file = pedfile,
                 fam_ids = fam_ids,
                 sample_bam_bai = sample_bam_bai,
+                median_coverage_file = make_median_manifest.manifest,
                 annotation_beds = annotation_beds,
                 annotation_names = annotation_names,
                 flank = depth_flank,
@@ -171,6 +187,39 @@ task make_sample_manifest {
 
     output {
         File manifest = "sample_bam_bai.tsv"
+    }
+
+    runtime {
+        cpu: 1
+        memory: "1 GiB"
+        disks: "local-disk 10 HDD"
+        bootDiskSizeGb: 8
+        docker: sv_base_mini_docker
+        preemptible: 2
+        maxRetries: 1
+    }
+}
+
+task make_median_manifest {
+    input {
+        Array[String] sample_ids
+        Array[Float] median_coverages
+        String sv_base_mini_docker
+    }
+
+    command <<<
+        set -euo pipefail
+        # one median per sample, in the same order as sample_ids
+        paste ~{write_lines(sample_ids)} <(printf '%s\n' ~{sep=" " median_coverages}) > sample_median.tsv
+        # guard against a length mismatch silently truncating the join
+        if [ "$(wc -l < ~{write_lines(sample_ids)})" -ne "$(wc -l < sample_median.tsv)" ]; then
+            echo "ERROR: sample_median_coverages length does not match sample_ids" >&2
+            exit 1
+        fi
+    >>>
+
+    output {
+        File manifest = "sample_median.tsv"
     }
 
     runtime {

@@ -21,7 +21,10 @@ A header line is optional (auto-detected and skipped). Example generator:
 (the trailing comma left by `[%SAMPLE,]` is stripped automatically.)
 
 The `samples` IDs must match the individual IDs in the ped file and the sample->BAM map.
-Output is plain TSV (chrom,start,end,ID,svtype,samples + header); the WDL task bgzips it.
+Output is plain TSV (chrom,start,end,ID,svtype,samples,svlen + header); the WDL task bgzips it.
+The 7th column `svlen` is the variant's length in bp, taken from REF/ALT via --variant-info when
+available (so insertions/deletions size by their allele length) and otherwise the coordinate
+span. Consumers that want only the original 6 columns can ignore it.
 
 OPTIONAL: pass --genotypes-raw to also emit a per-variant genotype table for the pedigree glyph.
 It is a bcftools dump over the source VCF for ALL samples:
@@ -70,6 +73,44 @@ def resolve_id(chrom, start, end, vid, svtype):
     return vid if vid.strip() not in ("", ".") else f"{chrom}_{start}_{end}_{svtype}"
 
 
+def allele_length(ref, alt):
+    """Length in bp of a sequence-allele variant from its REF/ALT, or None for symbolic/
+    breakend ALTs (the caller then uses the coordinate span). SNV/MNV -> len(REF); indel ->
+    |len(REF) - len(ALT)| (the inserted or deleted bases, excluding the shared anchor base,
+    e.g. G->GCA and GCA->G are both 2 bp)."""
+    if not ref or not alt:
+        return None
+    alt = alt.split(",")[0].strip()      # first ALT if a record slipped through un-split
+    ref = ref.strip()
+    if not ref or not alt or alt == "." or alt[0] in "<*" or "[" in alt or "]" in alt:
+        return None
+    return len(ref) if len(ref) == len(alt) else abs(len(ref) - len(alt))
+
+
+def load_allele_lengths(path):
+    """From a VCF dump 'chrom, pos, end, ID, REF, ALT' (multiallelics pre-split) build
+    (by_id, by_locus) lookups of allele length. The ID field may be ';'-joined for sites that
+    were multiallelic, so register each sub-ID; the locus key is (chrom, pos, end)."""
+    by_id, by_locus = {}, {}
+    with open(path) as fh:
+        for line in fh:
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 6:
+                continue
+            length = allele_length(f[4], f[5])
+            if length is None:
+                continue
+            try:
+                by_locus.setdefault((f[0], int(f[1]), int(f[2])), length)
+            except ValueError:
+                continue
+            for one in f[3].split(";"):
+                one = one.strip()
+                if one and one != ".":
+                    by_id.setdefault(one, length)
+    return by_id, by_locus
+
+
 def write_genotypes(raw_path, out_path, id_by_locus, valid_ids):
     """Rewrite a bcftools GT dump (chrom, pos, end, ID, svtype, then one 'sample=GT' field per
     sample) to 'ID<TAB>sample=GT,...' keyed by the SAME resolved variant ID as the varfile, so
@@ -105,6 +146,9 @@ def main():
                     help="6-column TSV (chrom,pos,end,ID,svtype,samples); header optional")
     ap.add_argument("--output", default="variants_for_visualization.bed",
                     help="output BED (plain TSV; bgzipped by the WDL task)")
+    ap.add_argument("--variant-info", default=None,
+                    help="optional bcftools dump 'chrom,pos,end,ID,REF,ALT' (multiallelics "
+                         "split) used to size each variant by its allele length in the header")
     ap.add_argument("--genotypes-raw", default=None,
                     help="optional bcftools GT dump (chrom,pos,end,ID,svtype, then a "
                          "'sample=GT' field per sample) to reconcile against the resolved IDs")
@@ -133,10 +177,19 @@ def main():
 
     rows.sort(key=lambda r: (r[0], r[1]))
 
+    by_id, by_locus = load_allele_lengths(args.variant_info) if args.variant_info else ({}, {})
+
     with open(args.output, "w") as out:
-        out.write("#chrom\tstart\tend\tID\tsvtype\tsamples\n")
+        out.write("#chrom\tstart\tend\tID\tsvtype\tsamples\tsvlen\n")
         for chrom, start, end, vid, svtype, samples in rows:
-            out.write(f"{chrom}\t{start}\t{end}\t{vid}\t{svtype}\t{samples}\n")
+            # allele length from REF/ALT (by ID, then locus); fall back to the coordinate span,
+            # which is SVLEN for symbolic SVs. No flooring -- the value is the true length.
+            svlen = by_id.get(vid)
+            if svlen is None:
+                svlen = by_locus.get((chrom, start, end))
+            if svlen is None:
+                svlen = end - start
+            out.write(f"{chrom}\t{start}\t{end}\t{vid}\t{svtype}\t{samples}\t{svlen}\n")
 
     sys.stderr.write(f"Wrote {len(rows)} variants to {args.output}\n")
 

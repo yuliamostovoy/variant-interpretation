@@ -184,6 +184,15 @@ with open(varfile, 'r') as f:
             group_order.append(k)
         groups[k].append(dat)
 
+# variant-location feature track: a BED of every plotted variant, loaded at the top of each
+# IGV panel to mark the variant without overlaying it. Coords are 0-based half-open, so a SNV
+# (end == pos) becomes a 1 bp feature.
+variant_track = "Variant.bed"
+with open(variant_track, 'w') as vt:
+    for k in group_order:
+        for dat in groups[k]:
+            vt.write("{}\t{}\t{}\t{}\n".format(dat[0], max(0, int(dat[1]) - 1), int(dat[2]), dat[3]))
+
 with open(bamfiscript,'w') as h:
     h.write("#!/bin/bash\n")
     h.write("set -e\n")
@@ -199,9 +208,15 @@ with open(bamfiscript,'w') as h:
                 g.write('genome ' + genome + '\n')
             # keep annotation/gene feature tracks at a standard (collapsed) height
             g.write('preference EXPAND_FEATURE_TRACKS false\n')
+            # no center line: it overlays the variant in tight (SNV/indel) windows
+            g.write('preference SAM.SHOW_CENTER_LINE false\n')
             # cap read depth (~100x) so deep long-read pileups don't exhaust the JVM heap
             g.write('preference SAM.DOWNSAMPLE_READS true\n')
             g.write('preference SAM.SAMPLING_READ_LIMIT 100\n')
+
+            # variant track first so it sits above the read tracks (annotation BEDs load after
+            # the reads, below them), marking the variant without overlaying it
+            g.write('load ' + variant_track + '\n')
 
             # track the loaded read files so we can re-squish just their alignment tracks
             # after a blanket collapse (see snapshot block)
@@ -248,15 +263,12 @@ with open(bamfiscript,'w') as h:
                         g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 1\n')
 
                 if Length_total<int(igv_max_window):
-                    if Length_total<1000:
-                        Start_Buff=int(Start-500)
-                        End_Buff=int(End+500)
-                    else:
-                        Start_Buff = int(Start - (Length * 0.25))
-                        End_Buff = int(End + (Length * 0.25))
-                    g.write('preference SAM.SHOW_CENTER_LINE false\n')
+                    # dynamic flanks (25% of the event length) with a 20 bp floor, so small
+                    # variants get a tight IGV-minimal window and larger ones scale up
+                    flank = max(20, int(Length * 0.25))
+                    Start_Buff = max(1, Start - flank)
+                    End_Buff = End + flank
                     g.write('goto '+Chr+":"+str(Start_Buff)+'-'+str(End_Buff)+'\n')
-                    g.write('region '+Chr+":"+str(Start)+'-'+str(End)+'\n')
                     if Length<=50:
                         g.write('sort base\n')
                     if not long_read:
@@ -267,9 +279,8 @@ with open(bamfiscript,'w') as h:
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.png\n' )
                 else:
-                    # split view: one snapshot per breakpoint, each centered on the junction
-                    # with a single center line (not a double-edged region-of-interest marker)
-                    g.write('preference SAM.SHOW_CENTER_LINE true\n')
+                    # split view: one snapshot per breakpoint window; the variant track marks
+                    # each junction at its feature edge
                     g.write('goto '+Chr+":"+str(Start-buff)+'-'+str(Start+buff)+'\n')
                     if not long_read:
                         g.write('viewaspairs\n')

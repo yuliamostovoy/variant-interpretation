@@ -1,0 +1,37 @@
+[
+    {
+        "type": "radio",
+        "columnName": "verdict",
+        "inputLabel": "Call",
+        "choices": [
+            {"value": "real", "label": "Real"},
+            {"value": "artifact", "label": "Artifact"},
+            {"value": "uncertain", "label": "Uncertain"}
+        ]
+    },
+    {
+        "type": "radio",
+        "columnName": "genotypes_supported",
+        "inputLabel": "Genotypes match the read/depth evidence",
+        "choices": [
+            {"value": "yes", "label": "Yes"},
+            {"value": "no", "label": "No"},
+            {"value": "unknown", "label": "Unknown"}
+        ]
+    },
+    {
+        "type": "radio",
+        "columnName": "inheritance",
+        "inputLabel": "Inheritance",
+        "choices": [
+            {"value": "denovo", "label": "De novo"},
+            {"value": "inherited", "label": "Inherited"},
+            {"value": "unclear", "label": "Unclear"}
+        ]
+    },
+    {
+        "type": "text",
+        "columnName": "notes",
+        "size": 80
+    }
+]
