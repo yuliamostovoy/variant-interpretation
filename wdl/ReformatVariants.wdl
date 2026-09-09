@@ -77,9 +77,14 @@ task reformat_variants {
             REGION=()
             if [ -n "$VCFIDX" ]; then
                 case "$VCFIDX" in
-                    *.csi) ln -sf "$VCFIDX" "${VCF}.csi" ;;
-                    *)     ln -sf "$VCFIDX" "${VCF}.tbi" ;;
+                    *.csi) IDXLINK="${VCF}.csi" ;;
+                    *)     IDXLINK="${VCF}.tbi" ;;
                 esac
+                # only create the link when the index isn't already sitting next to the VCF
+                # (Cromwell may localize both into the same dir, making src == dst)
+                if [ ! "$VCFIDX" -ef "$IDXLINK" ]; then
+                    ln -sf "$VCFIDX" "$IDXLINK"
+                fi
                 awk 'BEGIN{FS=OFS="\t"} $2 ~ /^[0-9]+$/ {s=$2-1; if(s<0)s=0; print $1, s, $3}' \
                     ~{variant_list} | sort -k1,1 -k2,2n > var_regions.bed
                 REGION=(-R var_regions.bed)
