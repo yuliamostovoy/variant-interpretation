@@ -26,6 +26,7 @@ import sample_labels
 HEADER_H = 60
 PED_H = 500           # target pedigree height in the header band
 HEADER_PAD = 16
+PED_MAX_FRAC = 0.42   # most of the header width the pedigree may occupy (text gets the rest)
 _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -173,7 +174,8 @@ def header_text_for(stem, info):
     # 6-col varfiles have no svlen, so fall back to the coordinate span
     svlen = info[vid][5]
     size = svlen if svlen is not None else end - start
-    return f"{vid}   {size:,} bp   {svtype}   {chrom}:{start}-{end}"
+    loc = f"{chrom}:{start}" if start == end else f"{chrom}:{start}-{end}"
+    return f"{vid}   {size:,} bp   {svtype}   {loc}"
 
 
 def family_for(stem, info):
@@ -211,31 +213,77 @@ def pedigree_for(stem, info, ped_ctx):
         gts=ped_ctx["genotypes"].get(vid, {}), carriers=carriers, target_h=PED_H)
 
 
+def _fit_font(text, max_width, start=40, floor=14):
+    """Largest font (size in [floor, start]) whose rendering of `text` fits within max_width."""
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    size = start
+    while size > floor:
+        font = _load_font(size)
+        if draw.textlength(text, font=font) <= max_width:
+            return font
+        size -= 2
+    return _load_font(floor)
+
+
+def _wrap_header_text(text, font, max_width, max_lines=2):
+    """Wrap the SV-info label onto up to max_lines, breaking only between its fields (the
+    3-space separators) so tokens like the coordinate span stay intact."""
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    lines, cur = [], ""
+    for part in text.split("   "):
+        trial = part if not cur else cur + "   " + part
+        if cur and draw.textlength(trial, font=font) > max_width and len(lines) < max_lines - 1:
+            lines.append(cur)
+            cur = part
+        else:
+            cur = trial
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def build_header(stem, info, width, ped_ctx):
     """A header band (width `width`): SV-info text on the left, pedigree on the right. Returns
-    None when there is neither text nor pedigree to show."""
+    None when there is neither text nor pedigree to show. The pedigree keeps up to PED_MAX_FRAC
+    of the width (shrunk only if narrower is needed, never enlarged past its natural size); the
+    text wraps onto up to two lines to fit the remaining space (shrinking its font only if a
+    single field is still too wide), so the two never overlap and neither is squeezed away."""
     text = header_text_for(stem, info) if info else None
     ped_img = pedigree_for(stem, info, ped_ctx)
     if text is None and ped_img is None:
         return None
 
-    font = _load_font(40)
     text_x = 20
-    # right edge of the text so the pedigree can be scaled into the space that remains, rather
-    # than overlapping the end of the label (a wide 3-child family used to cover part of it)
-    text_right = text_x + int(ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength(text, font=font)) \
-        if text else text_x
     if ped_img is not None:
-        avail = width - text_right - 2 * HEADER_PAD
-        if avail < 1 or ped_img.width > avail:
-            max_w = max(1, avail)
-            ped_img = ped_img.resize((max_w, max(1, int(ped_img.height * max_w / ped_img.width))))
+        ped_w = min(ped_img.width, max(1, int(width * PED_MAX_FRAC)))
+        if ped_w != ped_img.width:
+            ped_img = ped_img.resize((ped_w, max(1, int(ped_img.height * ped_w / ped_img.width))))
+    ped_w = ped_img.width if ped_img is not None else 0
 
-    height = max(HEADER_H, (ped_img.height + HEADER_PAD) if ped_img is not None else 0)
+    lines, font, text_h = [], _load_font(40), 0
+    if text:
+        max_text_w = max(1, width - ped_w - 2 * HEADER_PAD - text_x)
+        lines = _wrap_header_text(text, font, max_text_w)
+        draw0 = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        # safety net: a single field wider than the text column -> shrink the font and re-wrap
+        if max((draw0.textlength(ln, font=font) for ln in lines), default=0) > max_text_w:
+            font = _fit_font(max(lines, key=len), max_text_w)
+            lines = _wrap_header_text(text, font, max_text_w)
+        ascent, descent = font.getmetrics()
+        line_h = ascent + descent + 6
+        text_h = line_h * len(lines)
+
+    height = max(HEADER_H, text_h + HEADER_PAD,
+                 (ped_img.height + HEADER_PAD) if ped_img is not None else 0)
     header = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(header)
-    if text:
-        draw.text((text_x, height // 2 - 20), text, fill=(0, 0, 0), font=font)
+    if lines:
+        ascent, descent = font.getmetrics()
+        line_h = ascent + descent + 6
+        y = max(0, (height - line_h * len(lines)) // 2)
+        for ln in lines:
+            draw.text((text_x, y), ln, fill=(0, 0, 0), font=font)
+            y += line_h
     if ped_img is not None:
         header.paste(ped_img, (max(0, width - ped_img.width - HEADER_PAD),
                                max(0, (height - ped_img.height) // 2)))

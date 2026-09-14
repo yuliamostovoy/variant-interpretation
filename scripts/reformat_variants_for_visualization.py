@@ -189,7 +189,11 @@ def main():
                 svlen = by_locus.get((chrom, start, end))
             if svlen is None:
                 svlen = end - start
-            out.write(f"{chrom}\t{start}\t{end}\t{vid}\t{svtype}\t{samples}\t{svlen}\n")
+            # An insertion occupies no reference span; callers still store END=POS+SVLEN, which
+            # would off-center the plot and blow up the window. Collapse it to a point at POS
+            # (svlen, computed above, keeps the true inserted length for the header).
+            out_end = start if svtype == "INS" else end
+            out.write(f"{chrom}\t{start}\t{out_end}\t{vid}\t{svtype}\t{samples}\t{svlen}\n")
 
     sys.stderr.write(f"Wrote {len(rows)} variants to {args.output}\n")
 

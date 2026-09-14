@@ -29,6 +29,7 @@ workflow LongReadDepthPlot {
         Int? flank
         Float? flank_frac
         Int? window
+        Int? min_svlen
         String sv_base_mini_docker
         String long_read_visualize_docker
         RuntimeAttr? runtime_attr_depth
@@ -38,6 +39,7 @@ workflow LongReadDepthPlot {
     Int flank_ = select_first([flank, 5000])
     Float flank_frac_ = select_first([flank_frac, 0.1])
     Int window_ = select_first([window, 250])
+    Int min_svlen_ = select_first([min_svlen, 1000])
 
     if (defined(fam_ids)) {
         File fam_ids_ = select_first([fam_ids])
@@ -75,6 +77,7 @@ workflow LongReadDepthPlot {
                 flank = flank_,
                 flank_frac = flank_frac_,
                 window = window_,
+                min_svlen = min_svlen_,
                 prefix = prefix,
                 long_read_visualize_docker = long_read_visualize_docker,
                 runtime_attr_override = runtime_attr_depth
@@ -196,6 +199,7 @@ task depth_plot {
         Int flank
         Float flank_frac
         Int window
+        Int min_svlen
         String prefix
         String long_read_visualize_docker
         RuntimeAttr? runtime_attr_override
@@ -266,6 +270,7 @@ task depth_plot {
             --family ~{family} \
             --flank ~{flank} \
             --flank-frac ~{flank_frac} \
+            --min-svlen ~{min_svlen} \
             --depth-dir . \
             --outdir rd_plots \
             ~{"--median-file " + median_coverage_file} \

@@ -146,6 +146,10 @@ def main():
                     help="minimum bp of flank shown on each side of the interval (floor)")
     ap.add_argument("--flank-frac", type=float, default=0.1,
                     help="flank as a fraction of event length; per-variant flank = max(--flank, frac*SVLEN)")
+    ap.add_argument("--min-svlen", type=int, default=1000,
+                    help="skip the depth plot for DEL/DUP shorter than this; read-depth is "
+                         "uninformative below a few mosdepth windows, and the IGV read track "
+                         "already shows small events (combined plot falls back to IGV-only)")
     ap.add_argument("--depth-dir", default=".",
                     help="directory containing {sample}.regions.bed.gz files")
     ap.add_argument("--outdir", default="rd_plots")
@@ -190,6 +194,10 @@ def main():
             chrom, start, end, vid, svtype = f[0], int(f[1]), int(f[2]), f[3], f[4].upper()
             carriers = set(f[5].split(",")) if len(f) > 5 and f[5] else set()
             if svtype not in ("DEL", "DUP"):
+                continue
+            # svlen (7th col) when present, else the coordinate span
+            svlen = int(f[6]) if len(f) > 6 and f[6].strip() else end - start
+            if svlen < args.min_svlen:
                 continue
 
             flank = max(args.flank, int(args.flank_frac * (end - start)))
