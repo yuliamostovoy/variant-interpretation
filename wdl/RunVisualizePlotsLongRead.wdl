@@ -254,7 +254,11 @@ task concat_plots {
 
     RuntimeAttr default_attr = object {
                                       mem_gb: base_mem_gb,
-                                      disk_gb: ceil(10 + input_size * 2),
+                                      # this task holds both gathered plot tars, extracts them,
+                                      # copies the PNGs out (a 2nd copy), writes the combined PNGs,
+                                      # then re-tars -> peak disk ~5x the tar size. The old 10+2x
+                                      # under-provisioned and ran out of disk on the last large batch.
+                                      disk_gb: ceil(20 + input_size * 6),
                                       cpu: 1,
                                       preemptible: 2,
                                       max_retries: 1,

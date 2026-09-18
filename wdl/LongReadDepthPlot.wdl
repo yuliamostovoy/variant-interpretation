@@ -63,6 +63,8 @@ workflow LongReadDepthPlot {
                 bed = bed,
                 family = family,
                 ped_file = ped_file,
+                flank = flank_,
+                flank_frac = flank_frac_,
                 sv_base_mini_docker = sv_base_mini_docker,
                 runtime_attr_override = runtime_attr_create_bed
         }
@@ -71,6 +73,7 @@ workflow LongReadDepthPlot {
             input:
                 family = family,
                 per_family_bed = generate_per_family_bed.bed_file,
+                disk_gb_estimate = generate_per_family_bed.disk_gb,
                 ped_file = ped_file,
                 sample_bam_bai = sample_bam_bai,
                 median_coverage_file = median_coverage_file,
@@ -150,6 +153,8 @@ task generate_per_family_bed {
         File bed
         String family
         File ped_file
+        Int flank
+        Float flank_frac
         String sv_base_mini_docker
         RuntimeAttr? runtime_attr_override
     }
@@ -173,10 +178,22 @@ task generate_per_family_bed {
         cat ~{ped_file} | grep -w ~{family} | cut -f2 | sort -u > samples_in_family.txt
         # keep DEL/DUP rows carried by a member of this family; preserve all 6 columns
         cat ~{bed} | gunzip | tail -n+2 | cut -f1-6 | grep 'DEL\|DUP' | grep -F -w -f samples_in_family.txt > per_family_bed.bed || true
+
+        # Data-aware disk estimate for depth_plot. depth_plot slices each family member's BAM
+        # locally over these regions (each variant padded by max(flank_frac*L, flank) on both
+        # sides, mirroring depth_plot's regions.bed), so peak disk ~ n_samples x summed padded
+        # span x coverage. Long-read BAMs run ~1 byte per (ref-base . coverage-x); we assume
+        # ~50x and a 2x safety factor => n_samples * span_bp / 1e7 GB, plus a 20 GB base for the
+        # OS/docker/indexes. Spans are summed without merging (an upper bound). This is a default;
+        # a runtime_attr_depth override still wins.
+        n_samples=$(wc -l < samples_in_family.txt)
+        span=$(awk -v F=~{flank} -v FR=~{flank_frac} '{L=$3-$2; f=(L*FR>F)?L*FR:F; s+=L+2*f} END{print s+0}' per_family_bed.bed)
+        awk -v n="$n_samples" -v span="$span" 'BEGIN{d=20 + n*span/10000000; c=int(d); if(d>c)c++; print c}' > disk_gb.txt
         >>>
 
     output {
         File bed_file = "per_family_bed.bed"
+        Int disk_gb = read_int("disk_gb.txt")
     }
 
     runtime {
@@ -204,16 +221,19 @@ task depth_plot {
         Int window
         Int target_bins
         Int min_svlen
+        # data-aware disk estimate from generate_per_family_bed: this task streams each family
+        # member's BAM and slices it locally over the plotted regions, so peak disk scales with
+        # summed region span x family size (which size() cannot see), not with the tiny bed inputs.
+        Int disk_gb_estimate
         String prefix
         String long_read_visualize_docker
         RuntimeAttr? runtime_attr_override
     }
-    Float input_size = size(select_all([per_family_bed, sample_bam_bai, ped_file, median_coverage_file]), "GB")
     Float base_mem_gb = 3.75
 
     RuntimeAttr default_attr = object {
                                       mem_gb: base_mem_gb,
-                                      disk_gb: ceil(20 + input_size),
+                                      disk_gb: disk_gb_estimate,
                                       cpu: 1,
                                       preemptible: 2,
                                       max_retries: 1,

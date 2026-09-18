@@ -128,6 +128,7 @@ task runIGV_whole_genome_localize{
             RuntimeAttr? runtime_attr_override
         }
 
+    # localize path: BAMs are real File inputs, so their size is counted here
     Float input_size = size(select_all([varfile, ped_file, gene_track, gene_track_index]), "GB") + size(bams, "GB") + size(bais, "GB") + size(annotation_beds, "GB")
     # Peak IGV RAM is driven by how many BAM tracks are held at once (load-once) and the
     # capped read depth, NOT the variant count (variants render sequentially). Scale the
@@ -142,7 +143,7 @@ task runIGV_whole_genome_localize{
 
     RuntimeAttr default_attr = object {
                                       mem_gb: dynamic_mem_gb,
-                                      disk_gb: ceil(20 + input_size * 2),
+                                      disk_gb: ceil(30 + input_size * 2),
                                       cpu: 1,
                                       preemptible: 2,
                                       max_retries: 1,
@@ -271,7 +272,7 @@ task runIGV_whole_genome_parse{
 
     RuntimeAttr default_attr = object {
                                       mem_gb: dynamic_mem_gb,
-                                      disk_gb: ceil(20 + input_size * 2),
+                                      disk_gb: ceil(30 + input_size * 2),
                                       cpu: 1,
                                       preemptible: 2,
                                       max_retries: 1,
