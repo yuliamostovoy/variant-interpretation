@@ -213,10 +213,22 @@ with open(bamfiscript,'w') as h:
             # cap read depth (~100x) so deep long-read pileups don't exhaust the JVM heap
             g.write('preference SAM.DOWNSAMPLE_READS true\n')
             g.write('preference SAM.SAMPLING_READ_LIMIT 100\n')
+            # explicitly enable insertion markers + their size labels. IGV's default for
+            # SHOW_INSERTION_MARKERS is FALSE and is only flipped on by the auto "Third
+            # Generation" preset, which does not take effect in this headless batch, so
+            # without these lines no insertion marker (and thus no bp-size label) renders.
+            g.write('preference SAM.SHOW_INSERTION_MARKERS true\n')
+            g.write('preference SAM.FLAG_LARGE_INDELS true\n')
+            # put every track in one panel so load order sets vertical position. By default IGV
+            # splits tracks into a top data panel (coverage+reads) and a bottom feature panel
+            # (BEDs), which forces the variant track below the reads regardless of load order.
+            g.write('preference IGV.single.track.pane true\n')
 
-            # variant track first so it sits above the read tracks (annotation BEDs load after
-            # the reads, below them), marking the variant without overlaying it
+            # variant track first so it sits ABOVE the read tracks (annotation BEDs load after
+            # the reads, below them), marking the variant without overlaying it. `expand` gives
+            # each variant its own row so nearby variants don't blend onto one line.
             g.write('load ' + variant_track + '\n')
+            g.write('expand ' + variant_track + '\n')
 
             # track the loaded read files so we can re-squish just their alignment tracks
             # after a blanket collapse (see snapshot block)
@@ -249,6 +261,12 @@ with open(bamfiscript,'w') as h:
 
                 Length_total=int(Length+(Length)*1.5)
 
+                SVTYPE = dat[4].upper() if len(dat) > 4 else ''
+                # insertions need the per-read insertion-size label, which IGV only paints when a
+                # read row is tall enough (~>=8 px). Squished rows (5 px) drop the number, so render
+                # INS carrier tracks expanded (14 px); other SV types stay squished to stay compact.
+                read_display = 'expand' if SVTYPE == 'INS' else 'squish'
+
                 # long-read reads are noisy at the per-read indel level: hide sub-5bp
                 # indels for larger variants, but show them when the variant itself is small
                 if long_read:
@@ -275,7 +293,7 @@ with open(bamfiscript,'w') as h:
                         g.write('viewaspairs\n')
                     g.write('collapse\n')
                     for _bam in loaded_bams:
-                        g.write('squish ' + _bam + ' Alignments\n')
+                        g.write(read_display + ' ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.png\n' )
                 else:
@@ -286,7 +304,7 @@ with open(bamfiscript,'w') as h:
                         g.write('viewaspairs\n')
                     g.write('collapse\n')
                     for _bam in loaded_bams:
-                        g.write('squish ' + _bam + ' Alignments\n')
+                        g.write(read_display + ' ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.left.png\n' )
                     g.write('goto '+Chr+":"+str(End-buff)+'-'+str(End+buff)+'\n')
@@ -294,7 +312,7 @@ with open(bamfiscript,'w') as h:
                         g.write('viewaspairs\n')
                     g.write('collapse\n')
                     for _bam in loaded_bams:
-                        g.write('squish ' + _bam + ' Alignments\n')
+                        g.write(read_display + ' ' + _bam + ' Alignments\n')
                     g.write('snapshotDirectory '+outdir+'\n')
                     g.write('snapshot '+fam_id+'_'+ID+'.right.png\n' )
         g.write('exit\n')

@@ -29,6 +29,7 @@ workflow LongReadDepthPlot {
         Int? flank
         Float? flank_frac
         Int? window
+        Int? target_bins
         Int? min_svlen
         String sv_base_mini_docker
         String long_read_visualize_docker
@@ -39,6 +40,7 @@ workflow LongReadDepthPlot {
     Int flank_ = select_first([flank, 5000])
     Float flank_frac_ = select_first([flank_frac, 0.1])
     Int window_ = select_first([window, 250])
+    Int target_bins_ = select_first([target_bins, 1000])
     Int min_svlen_ = select_first([min_svlen, 1000])
 
     if (defined(fam_ids)) {
@@ -77,6 +79,7 @@ workflow LongReadDepthPlot {
                 flank = flank_,
                 flank_frac = flank_frac_,
                 window = window_,
+                target_bins = target_bins_,
                 min_svlen = min_svlen_,
                 prefix = prefix,
                 long_read_visualize_docker = long_read_visualize_docker,
@@ -199,6 +202,7 @@ task depth_plot {
         Int flank
         Float flank_frac
         Int window
+        Int target_bins
         Int min_svlen
         String prefix
         String long_read_visualize_docker
@@ -230,7 +234,17 @@ task depth_plot {
         cut -f1-3 ~{per_family_bed} \
             | awk -v F=~{flank} -v FR=~{flank_frac} '{L=$3-$2; f=(L*FR>F)?int(L*FR):F; s=$2-f; if(s<0)s=0; print $1"\t"s"\t"$3+f}' \
             | sort -k1,1 -k2,2n | bedtools merge -i - > regions.bed
-        bedtools makewindows -b regions.bed -w ~{window} > windows.bed
+        # Tile each merged region with a window sized to that region's span, targeting
+        # ~target_bins bins per region (floored at ~{window} bp). A fixed small window over a
+        # multi-Mb event yields hundreds of thousands of noisy bins; scaling keeps a roughly
+        # constant, smooth bin count while sub-(window*target_bins)-bp events keep fine windows.
+        while read chrom rs re; do
+            span=$((re - rs))
+            w=$(( span / ~{target_bins} ))
+            if [ "$w" -lt ~{window} ]; then w=~{window}; fi
+            printf '%s\t%s\t%s\n' "$chrom" "$rs" "$re" > one_region.bed
+            bedtools makewindows -b one_region.bed -w "$w"
+        done < regions.bed | sort -k1,1 -k2,2n > windows.bed
 
         # OAuth token for htslib to read gs:// BAMs via libcurl (GCS_OAUTH_TOKEN)
         export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \

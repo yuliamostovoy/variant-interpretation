@@ -283,8 +283,15 @@ task runIGV_whole_genome_parse{
     command <<<
             set -euo pipefail
             mkdir pe_igv_plots
-            cat ~{varfile} | cut -f1-3 | awk '{if (($3-$2)+int(($3-$2)*1.5)>=~{igv_max_window}) print $1"\t"$2-~{buffer}"\t"$2+~{buffer} "\n" $1"\t"$3-~{buffer}"\t"$3+~{buffer};
-                else print $1"\t"($2-int(($3-$2)*0.25))-~{buffer}"\t"$3+int(($3-$2)*0.25)+~{buffer}}' | sort -k1,1 -k2,2n | bgzip -c > regions.bed.gz
+            # clamp() keeps a window start >= 0: for variants near a contig start the padded
+            # start can go negative, which bgzip/tabix/samtools read back as a huge uint64 and
+            # reject ("end must not be less than start"). Mirrors the depth task's if(s<0)s=0.
+            cat ~{varfile} | cut -f1-3 | awk 'function clamp(x){return x<0?0:x}
+                {len=$3-$2;
+                 if (len+int(len*1.5)>=~{igv_max_window})
+                     print $1"\t"clamp($2-~{buffer})"\t"$2+~{buffer} "\n" $1"\t"clamp($3-~{buffer})"\t"$3+~{buffer};
+                 else
+                     print $1"\t"clamp(($2-int(len*0.25))-~{buffer})"\t"$3+int(len*0.25)+~{buffer}}' | sort -k1,1 -k2,2n | bgzip -c > regions.bed.gz
             tabix -p bed regions.bed.gz
             # OAuth token from the GCE metadata server (no gcloud SDK needed); htslib
             # reads gs:// BAMs via libcurl using GCS_OAUTH_TOKEN

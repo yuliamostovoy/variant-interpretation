@@ -39,6 +39,7 @@ workflow VisualizePlotsLongRead {
         Int? depth_flank
         Float? depth_flank_frac
         Int? depth_window
+        Int? depth_target_bins      # target bins per plotted region; window scales up for large events
         Int? depth_min_svlen        # skip the depth plot for DEL/DUP shorter than this (default 1 kb)
         # optional per-sample genome-wide median coverage, aligned by index to sample_ids/bams.
         # When supplied the depth track normalizes each sample by its own median so chrX/chrY
@@ -145,6 +146,7 @@ workflow VisualizePlotsLongRead {
                 flank_frac = depth_flank_frac,
                 min_svlen = depth_min_svlen,
                 window = depth_window,
+                target_bins = depth_target_bins,
                 sv_base_mini_docker = sv_base_mini_docker,
                 long_read_visualize_docker = long_read_visualize_docker,
                 runtime_attr_depth = runtime_attr_depth,
