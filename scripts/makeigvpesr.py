@@ -27,6 +27,8 @@ parser.add_argument('--status_labels', dest='status_labels', action='store_true'
 parser.add_argument('--annotation_beds', nargs='*', default=[], help='optional reference BED files to load as IGV feature tracks (e.g. segdups, N-gaps)')
 parser.add_argument('--annotation_names', nargs='*', default=[], help='track labels for --annotation_beds, in the same order')
 parser.add_argument('--genes', type=str, default=None, help='optional gene annotation file (gtf/gff3/bed/refGene) to load as an IGV gene track')
+parser.add_argument('--soft_clip', type=str, default='true', help='show soft-clipped read bases as mismatches (true/false); default true')
+parser.add_argument('--ins_window', type=int, default=500, help='total width (bp) of the IGV window centered on an insertion breakpoint; default 500')
 
 args = parser.parse_args()
 
@@ -43,6 +45,8 @@ status_labels = args.status_labels
 annotation_beds = args.annotation_beds
 annotation_names = args.annotation_names
 genes = args.genes
+show_soft_clipped = str(args.soft_clip).strip().lower() in ('true', '1', 'yes', 't')
+ins_window = args.ins_window
 
 # per-sample relationship-role labels (Pro/Mo/Fa/Sib/MGM.../Rel), shared with the depth plot and
 # the pedigree glyph so a track maps to the same individual on every surface
@@ -219,10 +223,25 @@ with open(bamfiscript,'w') as h:
             # without these lines no insertion marker (and thus no bp-size label) renders.
             g.write('preference SAM.SHOW_INSERTION_MARKERS true\n')
             g.write('preference SAM.FLAG_LARGE_INDELS true\n')
+            # show the soft-clipped portion of reads (rendered as colored mismatch bases) instead
+            # of hiding it behind the small clip marker. IGV's default is FALSE, which cuts the read
+            # off at the clip site; showing it exposes the clipped sequence (often the other side of
+            # an SV breakpoint) for evaluation. Toggled by the --soft_clip input (default on).
+            g.write('preference SAM.SHOW_SOFT_CLIPPED ' + ('true' if show_soft_clipped else 'false') + '\n')
             # put every track in one panel so load order sets vertical position. By default IGV
             # splits tracks into a top data panel (coverage+reads) and a bottom feature panel
             # (BEDs), which forces the variant track below the reads regardless of load order.
             g.write('preference IGV.single.track.pane true\n')
+            # IGV caps a data panel's snapshot height at maxPanelHeight (default 1000 px). With
+            # single.track.pane every sample's coverage+alignment rows stack in ONE panel, so a
+            # multi-sample family overflows 1000 px and the LAST-loaded tracks (e.g. the father)
+            # are silently clipped off the bottom of the PNG. Raise the cap to fit every track:
+            # reads are downsampled to <=100 rows, at ~14 px/row in the tallest (INS expand) mode
+            # plus a coverage row, ~1600 px/sample, with headroom for the variant/annotation/gene
+            # tracks. maxPanelHeight only caps (IGV still sizes the image to actual content), so a
+            # sparse family just yields a shorter image -- no whitespace padding.
+            panel_h = 500 + 1600 * max(1, len(cram_list))
+            g.write('maxPanelHeight ' + str(panel_h) + '\n')
 
             # variant track first so it sits ABOVE the read tracks (annotation BEDs load after
             # the reads, below them), marking the variant without overlaying it. `expand` gives
@@ -280,7 +299,26 @@ with open(bamfiscript,'w') as h:
                         g.write('preference SAM.HIDE_SMALL_INDEL false\n')
                         g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 1\n')
 
-                if Length_total<int(igv_max_window):
+                if SVTYPE == 'INS':
+                    # An insertion consumes NO reference, so the varfile END = POS + inserted_length
+                    # is not a real genomic span and the read CIGAR I sits at a single point near
+                    # POS. Plot a fixed 500 bp window centered on the annotated breakpoint (Start)
+                    # rather than the (huge, lopsided) span-driven window: broad enough to show
+                    # local context on both sides -- so a CIGAR I that landed a bit off the
+                    # annotated site is still in view -- and to render the insertion-size label.
+                    # Window width is the --ins_window input (default 500 bp), split around Start.
+                    half = max(1, ins_window // 2)
+                    Start_Buff = max(1, Start - half)
+                    End_Buff = Start + half
+                    g.write('goto '+Chr+":"+str(Start_Buff)+'-'+str(End_Buff)+'\n')
+                    if not long_read:
+                        g.write('viewaspairs\n')
+                    g.write('collapse\n')
+                    for _bam in loaded_bams:
+                        g.write(read_display + ' ' + _bam + ' Alignments\n')
+                    g.write('snapshotDirectory '+outdir+'\n')
+                    g.write('snapshot '+fam_id+'_'+ID+'.png\n' )
+                elif Length_total<int(igv_max_window):
                     # dynamic flanks (25% of the event length) with a 20 bp floor, so small
                     # variants get a tight IGV-minimal window and larger ones scale up
                     flank = max(20, int(Length * 0.25))

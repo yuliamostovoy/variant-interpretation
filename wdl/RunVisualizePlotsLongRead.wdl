@@ -53,6 +53,10 @@ workflow VisualizePlotsLongRead {
         # file as gene_track plus its .tbi as gene_track_index (otherwise it is indexed at runtime)
         File? gene_track
         File? gene_track_index
+        # IGV rendering options: show soft-clipped read bases (as mismatches) and the total width
+        # (bp) of the window centered on an insertion breakpoint
+        Boolean igv_soft_clip = true
+        Int igv_ins_window = 500
 
         String sv_base_mini_docker = "us.gcr.io/broad-dsde-methods/gatk-sv/sv-base-mini:2024-10-25-v0.29-beta-5ea22a52"
         String long_read_visualize_docker = "quay.io/ymostovoy/lr-visualize:latest"
@@ -119,6 +123,8 @@ workflow VisualizePlotsLongRead {
                 annotation_names = annotation_names,
                 gene_track = gene_track,
                 gene_track_index = gene_track_index,
+                igv_soft_clip = igv_soft_clip,
+                igv_ins_window = igv_ins_window,
                 prefix = prefix,
                 buffer = buffer_,
                 sv_base_mini_docker = sv_base_mini_docker,
@@ -187,6 +193,26 @@ task make_sample_manifest {
     command <<<
         set -euo pipefail
         paste ~{write_lines(sample_ids)} ~{write_lines(bais)} ~{write_lines(bams)} > sample_bam_bai.tsv
+
+        # Fail fast on a malformed manifest. Empty bam/bai cells in the Terra data table sail
+        # through paste and otherwise only surface deep in a scattered depth/IGV shard as an
+        # opaque 'samtools view failed for ' (empty path -> exit 1) or a curl 404 (empty bai ->
+        # exit 22 with empty stderr); catching them here, at the first tiny task, names the exact
+        # offending samples before the expensive scatter runs.
+        n_s=$(wc -l < ~{write_lines(sample_ids)})
+        n_i=$(wc -l < ~{write_lines(bais)})
+        n_b=$(wc -l < ~{write_lines(bams)})
+        if [ "$n_s" -ne "$n_i" ] || [ "$n_s" -ne "$n_b" ]; then
+            echo "ERROR: sample_ids ($n_s), bais ($n_i) and bams ($n_b) differ in length" >&2
+            exit 1
+        fi
+        # a sample missing its bam (col3) and/or bai (col2)
+        awk -F'\t' '$2=="" || $3==""{print "  "$1"\t(bai=\""$2"\" bam=\""$3"\")"}' sample_bam_bai.tsv > missing_paths.txt || true
+        if [ -s missing_paths.txt ]; then
+            echo "ERROR: $(wc -l < missing_paths.txt) sample(s) have a missing bam and/or bai path (fix the data table):" >&2
+            cat missing_paths.txt >&2
+            exit 1
+        fi
     >>>
 
     output {

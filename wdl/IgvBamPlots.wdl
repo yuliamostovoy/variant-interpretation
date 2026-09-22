@@ -36,6 +36,8 @@ workflow IGV {
         Array[String] annotation_names = []
         File? gene_track
         File? gene_track_index
+        Boolean igv_soft_clip = true
+        Int igv_ins_window = 500
     }
 
     if (file_localization) {
@@ -72,6 +74,8 @@ workflow IGV {
                 annotation_names = annotation_names,
                 gene_track = gene_track,
                 gene_track_index = gene_track_index,
+                igv_soft_clip = igv_soft_clip,
+                igv_ins_window = igv_ins_window,
                 igv_docker = igv_docker,
                 runtime_attr_override = runtime_attr_igv
         }
@@ -97,6 +101,8 @@ workflow IGV {
                 annotation_names = annotation_names,
                 gene_track = gene_track,
                 gene_track_index = gene_track_index,
+                igv_soft_clip = igv_soft_clip,
+                igv_ins_window = igv_ins_window,
                 igv_docker = igv_docker,
                 runtime_attr_override = runtime_attr_igv
         }
@@ -124,6 +130,8 @@ task runIGV_whole_genome_localize{
             Array[String] annotation_names = []
             File? gene_track
             File? gene_track_index
+            Boolean igv_soft_clip = true
+            Int igv_ins_window = 500
             String igv_docker
             RuntimeAttr? runtime_attr_override
         }
@@ -197,7 +205,7 @@ task runIGV_whole_genome_localize{
             fi
 
             # one IGV batch (and one JVM) for all of this family's variants
-            python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
+            python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} --soft_clip ~{igv_soft_clip} --ins_window ~{igv_ins_window} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
             bash pe.all.sh
 
             # Size the IGV JVM heap to this VM's actual RAM (mem_gb is set per-family in the
@@ -254,6 +262,8 @@ task runIGV_whole_genome_parse{
         Array[String] annotation_names = []
         File? gene_track
         File? gene_track_index
+        Boolean igv_soft_clip = true
+        Int igv_ins_window = 500
         String igv_docker
         RuntimeAttr? runtime_attr_override
     }
@@ -295,10 +305,15 @@ task runIGV_whole_genome_parse{
                      print $1"\t"clamp(($2-int(len*0.25))-~{buffer})"\t"$3+int(len*0.25)+~{buffer}}' | sort -k1,1 -k2,2n | bgzip -c > regions.bed.gz
             tabix -p bed regions.bed.gz
             # OAuth token from the GCE metadata server (no gcloud SDK needed); htslib
-            # reads gs:// BAMs via libcurl using GCS_OAUTH_TOKEN
-            export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
-                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
-                | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+            # reads gs:// BAMs via libcurl using GCS_OAUTH_TOKEN. These tokens live only ~60 min,
+            # so a task that subsets many samples' remote BAMs can outlive one fetched at the start;
+            # a then-expired token gives HTTP 401 -> gcs_cp curl exit 22 / samtools "Operation not
+            # permitted". Re-fetch it before each sample.
+            refresh_token () {
+                export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+                    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+                    | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+            }
             # Bill a project for requester-pays buckets: htslib sends it as X-Goog-User-Project,
             # and we add the same header to gcs_cp. Use this VM's compute project; ignored for
             # non-requester-pays buckets.
@@ -314,6 +329,7 @@ task runIGV_whole_genome_parse{
             # subset each remote BAM to the plotted regions
             while read sample bai bam new_bam new_bai
             do
+                refresh_token   # fresh token per sample so a long multi-sample task never uses an expired one
                 gcs_cp "$bai" "$( basename $bam | sed 's/\.bam$/.bai/g' )"
                 # name the subset by sample id so makeigvpesr maps each track to its sample
                 samtools view -h -b -o $sample.bam $bam -L regions.bed.gz -M
@@ -352,7 +368,7 @@ task runIGV_whole_genome_parse{
             fi
 
             # one IGV batch (and one JVM) for all of this family's variants
-            python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} --status_labels $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
+            python /src/variant-interpretation/scripts/makeigvpesr.py -v ~{varfile} -fam_id ~{family} -samples ~{sep="," samples} -crams bams.txt -p ~{ped_file} -o pe_igv_plots -b ~{buffer} -i pe.all.txt -bam pe.all.sh -m ~{igv_max_window} --genome ~{igv_genome} ~{true="--long_read" false="" long_read} --status_labels --soft_clip ~{igv_soft_clip} --ins_window ~{igv_ins_window} $GENES_ARG --annotation_beds ~{sep=" " annotation_beds} --annotation_names ~{sep=" " annotation_names}
             bash pe.all.sh
 
             # Size the IGV JVM heap to this VM's actual RAM (mem_gb is set per-family in the

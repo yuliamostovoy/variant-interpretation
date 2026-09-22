@@ -25,6 +25,8 @@ workflow IGV_all_samples {
         Array[String] annotation_names = []
         File? gene_track
         File? gene_track_index
+        Boolean igv_soft_clip = true
+        Int igv_ins_window = 500
         String prefix
         String buffer
         String sv_base_mini_docker
@@ -95,6 +97,8 @@ workflow IGV_all_samples {
                     annotation_names = annotation_names,
                     gene_track = gene_track,
                     gene_track_index = gene_track_index,
+                    igv_soft_clip = igv_soft_clip,
+                    igv_ins_window = igv_ins_window,
                     igv_max_window = igv_max_window,
                     bams_localize = generate_per_family_sample_bam_bai.per_family_bams_files,
                     bais_localize = generate_per_family_sample_bam_bai.per_family_bais_files,
@@ -120,6 +124,8 @@ workflow IGV_all_samples {
                     annotation_names = annotation_names,
                     gene_track = gene_track,
                     gene_track_index = gene_track_index,
+                    igv_soft_clip = igv_soft_clip,
+                    igv_ins_window = igv_ins_window,
                     igv_max_window = igv_max_window,
                     bams_parse = generate_per_family_sample_bam_bai.per_family_bams_strings,
                     bais_parse = generate_per_family_sample_bam_bai.per_family_bais_strings,

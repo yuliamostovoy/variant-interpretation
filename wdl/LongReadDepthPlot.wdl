@@ -250,26 +250,40 @@ task depth_plot {
         grep -w ^~{family} ~{ped_file} | cut -f2 | sort -u > fam_samples.txt
         grep -w -f fam_samples.txt ~{sample_bam_bai} > fam_scc.txt   # sample <tab> bai <tab> bam
 
-        # regions (+/- flank) and fine windows for mosdepth
+        # padded per-variant regions (+/- flank). Merged only for the BAM subset below (one
+        # samtools extraction covers overlapping events); windowed PER VARIANT for mosdepth.
         cut -f1-3 ~{per_family_bed} \
             | awk -v F=~{flank} -v FR=~{flank_frac} '{L=$3-$2; f=(L*FR>F)?int(L*FR):F; s=$2-f; if(s<0)s=0; print $1"\t"s"\t"$3+f}' \
-            | sort -k1,1 -k2,2n | bedtools merge -i - > regions.bed
-        # Tile each merged region with a window sized to that region's span, targeting
-        # ~target_bins bins per region (floored at ~{window} bp). A fixed small window over a
-        # multi-Mb event yields hundreds of thousands of noisy bins; scaling keeps a roughly
-        # constant, smooth bin count while sub-(window*target_bins)-bp events keep fine windows.
+            | sort -k1,1 -k2,2n > padded_regions.bed
+        bedtools merge -i padded_regions.bed > regions.bed
+        # Tile EACH variant's own padded region with a window sized to THAT variant's span,
+        # targeting ~target_bins bins (floored at ~{window} bp). A fixed small window over a
+        # multi-Mb event yields hundreds of thousands of noisy bins, so the size scales per event.
+        # NB: window PER VARIANT, not per merged region -- a small event embedded in a much larger
+        # one (e.g. a 20 kb DUP inside a 50 Mb DUP) would otherwise inherit the large event's
+        # coarse (~tens-of-kb) bins, leaving only a single window across its plotting span and
+        # collapsing its depth trace to one invisible point. mosdepth --by computes each region
+        # independently, so the overlapping fine+coarse windows two events contribute in a shared
+        # area are fine (verified: overlapping --by regions are supported).
         while read chrom rs re; do
             span=$((re - rs))
             w=$(( span / ~{target_bins} ))
             if [ "$w" -lt ~{window} ]; then w=~{window}; fi
             printf '%s\t%s\t%s\n' "$chrom" "$rs" "$re" > one_region.bed
             bedtools makewindows -b one_region.bed -w "$w"
-        done < regions.bed | sort -k1,1 -k2,2n > windows.bed
+        done < padded_regions.bed | sort -k1,1 -k2,2n -u > windows.bed
 
-        # OAuth token for htslib to read gs:// BAMs via libcurl (GCS_OAUTH_TOKEN)
-        export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
-            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
-            | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+        # OAuth token for htslib to read gs:// BAMs via libcurl (GCS_OAUTH_TOKEN). These tokens
+        # live only ~60 min. A depth task over a mega-CNV family reads several ~150 GiB BAMs
+        # sequentially and can run well past that (observed ~77 min), so a token fetched once at
+        # task start expires mid-run: late BAM opens then get HTTP 401, which htslib surfaces as
+        # "Operation not permitted", and a token expiring mid-read shows as a BGZF short read
+        # ("Failed to read BGZF header"). So re-fetch the token before every sample and retry.
+        refresh_token () {
+            export GCS_OAUTH_TOKEN=$(curl -s -H "Metadata-Flavor: Google" \
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+                | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+        }
         # project billed for requester-pays buckets; sent as X-Goog-User-Project by htslib and
         # gcs_cp, ignored for non-requester-pays buckets
         export GCS_REQUESTER_PAYS_PROJECT=$(curl -s -H "Metadata-Flavor: Google" \
@@ -282,8 +296,12 @@ task depth_plot {
                 -o "$2" "https://storage.googleapis.com/${p}"
         }
         while read sample bai bam; do
+            # fresh token per sample so a long-running multi-sample task never opens a BAM with an
+            # already-expired token (each single-sample extraction is well under the ~60 min life)
+            refresh_token
             gcs_cp "$bai" "$( basename $bam ).bai" || true
-            # retry the remote open with backoff for transient gs:// failures
+            # retry the remote open with backoff, re-fetching the token each attempt (covers both a
+            # transient gs:// failure and a token that expired since the last open)
             n=0
             until samtools view -b -o $sample.bam $bam -L regions.bed -M; do
                 n=$((n+1))
@@ -293,6 +311,7 @@ task depth_plot {
                 fi
                 echo "samtools view attempt $n failed for $bam; retrying in $((n*15))s..." >&2
                 sleep $((n*15))
+                refresh_token
             done
             samtools index $sample.bam
             mosdepth --no-per-base --by windows.bed $sample $sample.bam

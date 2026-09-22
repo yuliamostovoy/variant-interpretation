@@ -209,8 +209,13 @@ def main():
                 # genome-wide median when supplied (keeps chrX/chrY ploidy), else local flank
                 factor = medians.get(sample) or norm_factor(windows, chrom, start, end)
                 xs, ys = [], []
+                span = hi - lo
                 for (c, s, e, d) in windows:
-                    if c == chrom and e > lo and s < hi:
+                    # skip a window wider than the whole plotted span: it is a coarse bin from an
+                    # overlapping larger event (mosdepth --by mixes both events' windows in a
+                    # shared region) and would contribute a single misleading point; this event's
+                    # own fine windows remain
+                    if c == chrom and e > lo and s < hi and (e - s) <= span:
                         xs.append((s + e) / 2.0)
                         ys.append(d / factor if factor else 0.0)
                 if not xs:
