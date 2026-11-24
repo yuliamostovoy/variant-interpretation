@@ -243,18 +243,18 @@ with open(bamfiscript,'w') as h:
             panel_h = 500 + 1600 * max(1, len(cram_list))
             g.write('maxPanelHeight ' + str(panel_h) + '\n')
 
-            # variant track first so it sits ABOVE the read tracks (annotation BEDs load after
-            # the reads, below them), marking the variant without overlaying it. `expand` gives
-            # each variant its own row so nearby variants don't blend onto one line.
+            # ALL feature/annotation tracks (variant, annotation BEDs, genes) load before ANY
+            # BAM. IGV's single-track-pane panel silently drops whichever tracks sit at the
+            # panel boundary when feature and alignment loads are interleaved (e.g. a feature
+            # track loaded before some BAMs and after others) -- verified empirically: grouping
+            # all feature loads together ahead of all BAM loads is the only order that renders
+            # every track intact.
+            #
+            # variant track first so it sits ABOVE the read tracks, marking the variant without
+            # overlaying it. `expand` gives each variant its own row so nearby variants don't
+            # blend onto one line.
             g.write('load ' + variant_track + '\n')
             g.write('expand ' + variant_track + '\n')
-
-            # track the loaded read files so we can re-squish just their alignment tracks
-            # after a blanket collapse (see snapshot block)
-            loaded_bams = []
-            for load_arg, squish_name in build_tracks(carriers):
-                g.write('load ' + load_arg + '\n')
-                loaded_bams.append(squish_name)
 
             # reference annotation tracks (segdups, N-gaps, ...) so IGV-only variants
             # still show them; symlink to the given name for a clean track label
@@ -271,6 +271,13 @@ with open(bamfiscript,'w') as h:
             if genes:
                 g.write('load ' + os.path.abspath(genes) + '\n')
 
+            # track the loaded read files so we can re-squish just their alignment tracks
+            # after a blanket collapse (see snapshot block)
+            loaded_bams = []
+            for load_arg, squish_name in build_tracks(carriers):
+                g.write('load ' + load_arg + '\n')
+                loaded_bams.append(squish_name)
+
             for dat in groups[k]:
                 Chr=dat[0]
                 Start=int(dat[1])
@@ -281,23 +288,57 @@ with open(bamfiscript,'w') as h:
                 Length_total=int(Length+(Length)*1.5)
 
                 SVTYPE = dat[4].upper() if len(dat) > 4 else ''
+                # true allele length, from varfile column 7 (written by
+                # reformat_variants_for_visualization.py). An insertion consumes no reference, so
+                # its END is collapsed to POS and the End-Start span above is always 0 -- this
+                # column is the only place the real inserted length survives. It is absent from
+                # older varfiles, hence the None fallback below.
+                SVLEN = None
+                if len(dat) > 6 and dat[6] not in ('', '.'):
+                    try:
+                        SVLEN = abs(int(dat[6]))
+                    except ValueError:
+                        SVLEN = None
+
                 # insertions need the per-read insertion-size label, which IGV only paints when a
                 # read row is tall enough (~>=8 px). Squished rows (5 px) drop the number, so render
                 # INS carrier tracks expanded (14 px); other SV types stay squished to stay compact.
                 read_display = 'expand' if SVTYPE == 'INS' else 'squish'
 
-                # long-read reads are noisy at the per-read indel level: hide sub-5bp
-                # indels for larger variants, but show them when the variant itself is small
+                # long-read reads are noisy at the per-read indel level, so suppress indels smaller
+                # than the variant we came to look at. Scale the cutoff to the variant's own size
+                # so a deliberately plotted small indel is never hidden by the noise filter.
                 if long_read:
-                    if Length > 50:
+                    # Size off SVLEN, not the End-Start span: the span is 0 for every INS
+                    # regardless of the inserted length. An INS with no svlen column (older
+                    # varfile) has an unknowable size -- treat it as large, which is right for the
+                    # large insertions that dominate long-read candidate lists.
+                    if SVLEN is not None:
+                        event_size = SVLEN
+                    elif SVTYPE == 'INS':
+                        event_size = None
+                    else:
+                        event_size = Length
+
+                    # indel_floor is the smallest per-read indel IGV will draw: it renders an indel
+                    # only when its size >= SAM.SMALL_INDEL_BP_THRESHOLD. 0 means draw everything.
+                    if event_size is None or event_size >= 10:
+                        indel_floor = 5
+                    elif event_size >= 5:
+                        indel_floor = 2
+                    else:
+                        indel_floor = 0
+
+                    if indel_floor:
                         g.write('preference SAM.HIDE_SMALL_INDEL true\n')
-                        g.write('preference SAM.SMALL_INDEL_BP_THRESHOLD 5\n')
-                        # also stop labeling sub-5bp insertions (SAM.LARGE_INSERTIONS_THRESOLD
-                        # is IGV's actual, misspelled key) so hidden indels don't leave markers
-                        g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 5\n')
+                        g.write('preference SAM.SMALL_INDEL_BP_THRESHOLD '+str(indel_floor)+'\n')
                     else:
                         g.write('preference SAM.HIDE_SMALL_INDEL false\n')
-                        g.write('preference SAM.LARGE_INSERTIONS_THRESOLD 1\n')
+                    # SAM.LARGE_INSERTIONS_THRESOLD (IGV's actual, misspelled key) gates the size
+                    # label, which IGV paints only when size > the value -- one *below* the hide
+                    # cutoff, so every insertion that is drawn also carries its size label, and
+                    # nothing hidden leaves a stray label behind.
+                    g.write('preference SAM.LARGE_INSERTIONS_THRESOLD '+str(max(0, indel_floor - 1))+'\n')
 
                 if SVTYPE == 'INS':
                     # An insertion consumes NO reference, so the varfile END = POS + inserted_length

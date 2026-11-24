@@ -4,9 +4,9 @@
         "columnName": "verdict",
         "inputLabel": "Call",
         "choices": [
-            {"value": "real", "label": "Real"},
-            {"value": "artifact", "label": "Artifact"},
-            {"value": "uncertain", "label": "Uncertain"}
+            {"value": "real", "label": "real"},
+            {"value": "artifact", "label": "artifact"},
+            {"value": "uncertain", "label": "uncertain"}
         ]
     },
     {
@@ -14,9 +14,9 @@
         "columnName": "genotypes_supported",
         "inputLabel": "Genotypes match the read/depth evidence",
         "choices": [
-            {"value": "yes", "label": "Yes"},
-            {"value": "no", "label": "No"},
-            {"value": "unknown", "label": "Unknown"}
+            {"value": "yes", "label": "yes"},
+            {"value": "no", "label": "no"},
+            {"value": "unknown", "label": "unknown"}
         ]
     },
     {
@@ -24,9 +24,9 @@
         "columnName": "inheritance",
         "inputLabel": "Inheritance",
         "choices": [
-            {"value": "denovo", "label": "De novo"},
-            {"value": "inherited", "label": "Inherited"},
-            {"value": "unclear", "label": "Unclear"}
+            {"value": "denovo", "label": "de novo"},
+            {"value": "inherited", "label": "inherited"},
+            {"value": "unclear", "label": "unclear"}
         ]
     },
     {

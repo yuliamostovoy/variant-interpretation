@@ -334,9 +334,11 @@ task generate_per_family_bed{
 
     command <<<
         set -euo pipefail
-        cat ~{varfile} | gunzip | cut -f1-6 > updated_varfile.bed
+        # keep column 7 (svlen): an INS has END collapsed to POS, so the allele length only
+        # survives in that column -- makeigvpesr.py needs it to size-gate the indel display
+        cat ~{varfile} | gunzip | cut -f1-7 > updated_varfile.bed
         # -F -w: match the (dot-containing) sample IDs literally and whole-word, not as regex
-        grep -F -w -f ~{write_lines(samples)} updated_varfile.bed | cut -f1-6 | awk '{print $1,$2,$3,$4,$5,$6}' | sed -e 's/ /\t/g' > ~{filename}.~{family}.bed
+        grep -F -w -f ~{write_lines(samples)} updated_varfile.bed | cut -f1-7 > ~{filename}.~{family}.bed
         >>>
 
     output{
